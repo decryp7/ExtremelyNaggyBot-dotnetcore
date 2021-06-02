@@ -18,8 +18,8 @@ steps:
     path: /var/run/docker.sock
   commands:
   - docker login docker.decryptology.net -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
-  - docker build -t docker.decryptology.net/decryptology/ExtremelyNaggyBot:latest .
-  - docker push docker.decryptology.net/decryptology/ExtremelyNaggyBot:latest
+  - docker build -t docker.decryptology.net/decryptology/extremelynaggybot:latest .
+  - docker push docker.decryptology.net/decryptology/extremelynaggybot:latest
 
 volumes:
   - name: dockersock
