@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ExtremelyNaggyBot": {
+      "commandName": "Project",
+      "commandLineArgs": "%ExtremelyNaggyBotToken%"
+    }
+  }
+}
