@@ -1,5 +1,5 @@
 FROM mcr.microsoft.com/dotnet/sdk:5.0 AS build
-WORKDIR /src/ExtremelyNaggyBot
+WORKDIR /src
 
 RUN ls
 
