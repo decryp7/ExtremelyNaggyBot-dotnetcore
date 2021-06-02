@@ -7,6 +7,6 @@ RUN dotnet restore
 COPY /src/ExtremelyNaggyBot/. ./
 RUN dotnet publish -c Release -o out
 
-COPY /src/out/ App/
+COPY /src/bin/Release/net5.0/ App/
 WORKDIR /App
 ENTRYPOINT dotnet ExtremelyNaggyBot.dll $TELEGRAM_BOT_TOKEN
