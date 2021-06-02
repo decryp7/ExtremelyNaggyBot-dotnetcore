@@ -4,9 +4,9 @@ WORKDIR /src
 COPY /src/ExtremelyNaggyBot/*.csproj ./
 RUN dotnet restore 
 
-COPY /src/ExtremelyNaggyBot/. .
+COPY /src/ExtremelyNaggyBot/. ./
 RUN dotnet publish -c Release -o out
 
-COPY bin/Release/net5.0/publish/ App/
+COPY /src/bin/Release/net5.0/publish/ App/
 WORKDIR /App
 ENTRYPOINT dotnet ExtremelyNaggyBot.dll $TELEGRAM_BOT_TOKEN
