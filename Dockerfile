@@ -7,7 +7,7 @@ RUN dotnet restore
 COPY /src/ExtremelyNaggyBot ./
 RUN dotnet publish -c Release -o out
 
-RUN ls /src/out
+CMD find .
 
 COPY /src/out App/
 WORKDIR /App
