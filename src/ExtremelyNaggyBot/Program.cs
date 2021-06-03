@@ -43,14 +43,14 @@ namespace ExtremelyNaggyBot
             botClient.StopReceiving();
         }
 
-        private static async void BotClientOnOnMessage(object? sender, MessageEventArgs e)
+        private static async void BotClientOnOnMessage(object sender, MessageEventArgs e)
         {
             switch (e.Message.Type)
             {
                 case MessageType.WebsiteConnected:
                     await botClient.SendTextMessageAsync(
                         chatId: e.Message.Chat,
-                        text: "Hello, Extremely Naggy Bot at your service."
+                        text: $"Hello {e.Message.From.FirstName}, Extremely Naggy Bot at your service."
                     );
                     break;
                 default:
