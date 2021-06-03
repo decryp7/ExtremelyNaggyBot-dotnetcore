@@ -21,3 +21,8 @@ steps:
   - docker build -t docker.decryptology.net/decryptology/extremelynaggybot:latest .
   - docker push docker.decryptology.net/decryptology/extremelynaggybot:latest
 
+volumes:
+  - name: dockersock
+    host:
+      path: /var/run/docker.sock
+
