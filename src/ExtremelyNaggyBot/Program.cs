@@ -42,9 +42,6 @@ namespace ExtremelyNaggyBot
                 Environment.Exit(0);
             }
 
-            Directory.CreateDirectory("data");
-            File.Create(Path.Combine("data", "test.txt")).Dispose();
-
             IClock clock = new Clock();
             IDisposable subscription = clock.Tick
                 .ObserveOn(Scheduler.Default)
