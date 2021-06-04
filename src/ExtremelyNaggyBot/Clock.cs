@@ -11,17 +11,19 @@ namespace ExtremelyNaggyBot
     {
         private readonly BehaviorSubject<DateTime> tickBehaviorSubject;
 
-        public IObservable<DateTime> Tick => tickBehaviorSubject;
+        public IObservable<DateTime> Tick => tickBehaviorSubject.DistinctUntilChanged();
 
         public Clock()
         {
             tickBehaviorSubject = new BehaviorSubject<DateTime>(DateTime.Now.ToUniversalTime())
                 .DisposeWith(this);
 
-            Observable.Interval(TimeSpan.FromSeconds(1), Scheduler.Default)
+            Observable.Interval(TimeSpan.FromMinutes(1), Scheduler.Default)
                 .Subscribe(l =>
                 {
-                    tickBehaviorSubject.OnNext(DateTime.Now.ToUniversalTime());
+                    DateTime utcDateTime = DateTime.Now.ToUniversalTime();
+                    tickBehaviorSubject.OnNext(new DateTime(utcDateTime.Year, utcDateTime.Month, utcDateTime.Day, utcDateTime.Hour,
+                        utcDateTime.Minute, 0, DateTimeKind.Utc));
                 })
                 .DisposeWith(this);
         }
