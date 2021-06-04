@@ -49,6 +49,7 @@ namespace ExtremelyNaggyBot
                     message = d.Hour switch
                     {
                         9 when d.Minute == 0 => "Good Morning!",
+                        12 when d.Minute == 0 => "Good Afternoon!",
                         21 when d.Minute == 0 => "Good Night!",
                         _ => message
                     };
