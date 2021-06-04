@@ -7,10 +7,12 @@
 
   <ItemGroup>
     <PackageReference Include="GuardLibrary" Version="1.0.0" />
-    <PackageReference Include="SimpleDatabase" Version="1.0.0" />
-    <PackageReference Include="SimpleWorkflow" Version="1.0.0" />
     <PackageReference Include="System.Reactive" Version="5.0.0" />
     <PackageReference Include="Telegram.Bot" Version="15.7.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Database\" />
   </ItemGroup>
 
 </Project>

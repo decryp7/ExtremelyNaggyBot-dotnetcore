@@ -8,6 +8,8 @@ using Telegram.Bot;
 using Telegram.Bot.Args;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using System.IO;
+using File = System.IO.File;
 
 namespace ExtremelyNaggyBot
 {
@@ -39,6 +41,9 @@ namespace ExtremelyNaggyBot
                 Console.WriteLine($"There is an exception starting telegram bot client. {ex}");
                 Environment.Exit(0);
             }
+
+            Directory.CreateDirectory("data");
+            File.Create(Path.Combine("data", "test.txt")).Dispose();
 
             IClock clock = new Clock();
             IDisposable subscription = clock.Tick
