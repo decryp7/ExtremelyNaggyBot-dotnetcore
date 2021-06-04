@@ -12,6 +12,6 @@ RUN dotnet publish -c Release -o out
 
 # Build runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:5.0
-WORKDIR /App
+WORKDIR /app
 COPY --from=build-env /src/out .
 ENTRYPOINT dotnet ExtremelyNaggyBot.dll $TELEGRAM_BOT_TOKEN $ADMIN_CHATID
