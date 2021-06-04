@@ -56,10 +56,10 @@ namespace ExtremelyNaggyBot
                         TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(8), null, null));
                     message = d.Hour switch
                     {
-                        9 when d.Minute == 0 => "Good Morning!",
-                        12 when d.Minute == 0 => "Good Afternoon!",
-                        15 when d.Minute == 0 => "Nap Time!",
-                        21 when d.Minute == 0 => "Good Night!",
+                        9 when d.Minute == 0 && d.Second == 0 => "Good Morning!",
+                        12 when d.Minute == 0 && d.Second == 0 => "Good Afternoon!",
+                        15 when d.Minute == 0 && d.Second == 0 => "Nap Time!",
+                        21 when d.Minute == 0 && d.Second == 0 => "Good Night!",
                         _ => message
                     };
 
