@@ -3,6 +3,7 @@ WORKDIR /src
 
 # Copy csproj and restore as distinct layers
 COPY /src/ExtremelyNaggyBot/*.csproj ./
+RUN dotnet nuget add source https://repository.decryptology.net/repository/Nuget/ -n decryptology.net
 RUN dotnet restore 
 
 # Copy everything else and build
