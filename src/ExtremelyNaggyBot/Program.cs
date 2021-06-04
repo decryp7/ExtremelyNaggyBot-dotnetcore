@@ -41,7 +41,7 @@ namespace ExtremelyNaggyBot
             IClock clock = new Clock();
             IDisposable subscription = clock.Tick
                 .ObserveOn(Scheduler.Default)
-                .Subscribe(dateTime =>
+                .Subscribe(async dateTime =>
                 {
                     string message = string.Empty;
 
@@ -54,7 +54,7 @@ namespace ExtremelyNaggyBot
                         _ => message
                     };
 
-                    botClient.SendTextMessageAsync(new ChatId(adminChatId), message);
+                    await botClient.SendTextMessageAsync(new ChatId(adminChatId), message);
                 });
 
             botClient.OnMessage += BotClientOnOnMessage;
