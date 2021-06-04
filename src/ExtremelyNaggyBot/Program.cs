@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.ObjectModel;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
+using System.Reflection;
 using System.Threading;
 using Telegram.Bot;
 using Telegram.Bot.Args;
@@ -45,7 +47,8 @@ namespace ExtremelyNaggyBot
                 {
                     string message = string.Empty;
 
-                    DateTime d = dateTime.ToLocalTime();
+                    DateTime d = TimeZoneInfo.ConvertTimeFromUtc(dateTime,
+                        TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(8), null, null));
                     message = d.Hour switch
                     {
                         9 when d.Minute == 0 => "Good Morning!",
@@ -53,6 +56,11 @@ namespace ExtremelyNaggyBot
                         21 when d.Minute == 0 => "Good Night!",
                         _ => message
                     };
+
+                    if (string.IsNullOrEmpty(message))
+                    {
+                        return;
+                    }
 
                     await botClient.SendTextMessageAsync(new ChatId(adminChatId), message);
                 });
