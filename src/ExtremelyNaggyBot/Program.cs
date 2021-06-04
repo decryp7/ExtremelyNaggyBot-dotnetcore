@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Reactive.Concurrency;
+using System.Reactive.Linq;
 using System.Threading;
 using Telegram.Bot;
 using Telegram.Bot.Args;
@@ -10,16 +12,18 @@ namespace ExtremelyNaggyBot
     class Program
     {
         private static ITelegramBotClient botClient;
+        private static long adminChatId;
 
         static void Main(string[] args)
         {
-            if (args.Length < 1)
+            if (args.Length < 2)
             {
-                Console.WriteLine("Missing telegram token parameter!");
+                Console.WriteLine("Missing parameters! Mandatory parameters are TELEGRAM_BOT_TOKEN ADMIN_CHATID in this order.");
                 Environment.Exit(0);
             }
 
             botClient = new TelegramBotClient(args[0].Trim());
+            adminChatId = long.Parse(args[1]);
 
             try
             {
@@ -34,6 +38,24 @@ namespace ExtremelyNaggyBot
                 Environment.Exit(0);
             }
 
+            IClock clock = new Clock();
+            IDisposable subscription = clock.Tick
+                .ObserveOn(Scheduler.Default)
+                .Subscribe(dateTime =>
+                {
+                    string message = string.Empty;
+
+                    DateTime d = dateTime.ToLocalTime();
+                    message = d.Hour switch
+                    {
+                        9 when d.Minute == 0 => "Good Morning!",
+                        21 when d.Minute == 0 => "Good Night!",
+                        _ => message
+                    };
+
+                    botClient.SendTextMessageAsync(new ChatId(adminChatId), message);
+                });
+
             botClient.OnMessage += BotClientOnOnMessage;
             botClient.StartReceiving();
 
@@ -41,6 +63,8 @@ namespace ExtremelyNaggyBot
             Console.ReadKey();
 
             botClient.StopReceiving();
+            subscription.Dispose();
+            clock.Dispose();
         }
 
         private static async void BotClientOnOnMessage(object sender, MessageEventArgs e)
