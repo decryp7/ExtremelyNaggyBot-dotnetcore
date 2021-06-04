@@ -58,6 +58,7 @@ namespace ExtremelyNaggyBot
 
             botClient.OnMessage += BotClientOnOnMessage;
             botClient.StartReceiving();
+            botClient.SendTextMessageAsync(new ChatId(adminChatId), "Extremely Naggy Bot is online!");
 
             Console.WriteLine("Press any key to exit");
             Console.ReadKey();
