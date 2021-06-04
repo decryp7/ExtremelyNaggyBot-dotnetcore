@@ -53,6 +53,7 @@ namespace ExtremelyNaggyBot
                     {
                         9 when d.Minute == 0 => "Good Morning!",
                         12 when d.Minute == 0 => "Good Afternoon!",
+                        15 when d.Minute == 0 => "Nap Time!",
                         21 when d.Minute == 0 => "Good Night!",
                         _ => message
                     };
