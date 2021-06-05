@@ -9,7 +9,7 @@ using Telegram.Bot.Args;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using System.IO;
-using File = System.IO.File;
+using ExtremelyNaggyBot.Database;
 
 namespace ExtremelyNaggyBot
 {
