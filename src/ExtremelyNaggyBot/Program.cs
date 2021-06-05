@@ -9,6 +9,9 @@ using Telegram.Bot.Args;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using System.IO;
+using ExtremelyNaggyBot.Database;
+using ExtremelyNaggyBot.Database.Query;
+using SimpleDatabase;
 
 namespace ExtremelyNaggyBot
 {
@@ -39,6 +42,17 @@ namespace ExtremelyNaggyBot
             {
                 Console.WriteLine($"There is an exception starting telegram bot client. {ex}");
                 Environment.Exit(0);
+            }
+
+            IDatabase database = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
+                new IDatabaseQueryHandler[]
+                {
+                    new SetupQueryHandler()
+                });
+
+            if (database.Execute(new SetupQuery()).GetAwaiter().GetResult())
+            {
+                Console.WriteLine("Database is initialized!");
             }
 
             IClock clock = new Clock();
