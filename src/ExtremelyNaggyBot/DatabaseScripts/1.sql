@@ -16,3 +16,4 @@ CREATE TABLE IF NOT EXISTS reminders (
 			ON UPDATE NO ACTION
 );
 
+
