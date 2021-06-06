@@ -16,4 +16,9 @@ CREATE TABLE IF NOT EXISTS reminders (
 			ON UPDATE NO ACTION
 );
 
+CREATE TABLE IF NOT EXISTS db_info (
+	major_version INTEGER,
+	minor_version INTEGER
+);
+
 
