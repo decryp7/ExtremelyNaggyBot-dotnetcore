@@ -9,6 +9,7 @@ using Telegram.Bot.Args;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using System.IO;
+using ExtremelyNaggyBot.BotCommandHandlers;
 using ExtremelyNaggyBot.Database;
 using ExtremelyNaggyBot.Database.Query;
 using SimpleDatabase;
@@ -18,6 +19,7 @@ namespace ExtremelyNaggyBot
     class Program
     {
         private static ITelegramBotClient botClient;
+        private static IBotCommandHandlerService botCommandHandlerService;
         private static long adminChatId;
 
         static void Main(string[] args)
@@ -30,6 +32,8 @@ namespace ExtremelyNaggyBot
 
             botClient = new TelegramBotClient(args[0].Trim());
             adminChatId = long.Parse(args[1]);
+
+            botCommandHandlerService = new BotCommandHandlerService(botClient);
 
             try
             {
@@ -95,25 +99,34 @@ namespace ExtremelyNaggyBot
 
         private static async void BotClientOnOnMessage(object sender, MessageEventArgs e)
         {
-            switch (e.Message.Type)
+            try
             {
-                case MessageType.WebsiteConnected:
-                    await botClient.SendTextMessageAsync(
-                        chatId: e.Message.Chat,
-                        text: $"Hello {e.Message.From.FirstName}, Extremely Naggy Bot at your service."
-                    );
-                    break;
-                default:
-                    if (e.Message.Text != null)
-                    {
-                        Console.WriteLine($"Received a text message in chat {e.Message.Chat.Id}.");
+                if (e.Message.Entities != null &&
+                    e.Message.Entities.Length > 0 &&
+                    e.Message.Entities[0].Type == MessageEntityType.BotCommand)
+                {
+                    string command = e.Message.Text.Substring(e.Message.Entities[0].Offset);
+                    await botCommandHandlerService.Handle(e.Message.Chat,
+                        e.Message.Text.Substring(e.Message.Entities[0].Offset));
 
-                        await botClient.SendTextMessageAsync(
-                            chatId: e.Message.Chat,
-                            text: "You said:\n" + e.Message.Text
-                        );
-                    }
-                    break;
+                    return;
+                }
+
+                if (e.Message.Text == null)
+                {
+                    return;
+                }
+
+                string msg = $"Received a text message from {e.Message.From.FirstName}. Message: {e.Message.Text}";
+                Console.WriteLine(msg);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Internal Error has occurred. {ex}");
+                await botClient.SendTextMessageAsync(
+                    chatId: e.Message.Chat,
+                    text: $"Internal Error has occurred."
+                );
             }
         }
     }
