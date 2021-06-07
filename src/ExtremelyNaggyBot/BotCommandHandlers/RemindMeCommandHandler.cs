@@ -12,7 +12,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
     public class RemindMeCommandHandler : IBotCommandHandler
     {
         private readonly Regex remindmeRegex =
-            new Regex(@"(.*) (\d{1,2}\/\d{1,2}\/\d{4} \d{1,2}:\d{1,2}) (once|daily|weekly|monthly)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new Regex(@"(.+) (\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}) (once|daily|weekly|monthly)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public string Command { get; } = "/remindme";
 
