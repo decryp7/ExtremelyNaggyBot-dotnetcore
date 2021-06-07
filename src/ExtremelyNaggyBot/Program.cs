@@ -13,13 +13,13 @@ using ExtremelyNaggyBot.BotCommandHandlers;
 using ExtremelyNaggyBot.Database;
 using ExtremelyNaggyBot.Database.Query;
 using SimpleDatabase;
+using Telegram.Bot.Types.InlineQueryResults;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace ExtremelyNaggyBot
 {
     class Program
     {
-        private static ITelegramBotClient botClient;
-        private static IBotCommandHandlerService botCommandHandlerService;
         private static long adminChatId;
 
         static void Main(string[] args)
@@ -30,14 +30,36 @@ namespace ExtremelyNaggyBot
                 Environment.Exit(0);
             }
 
-            botClient = new TelegramBotClient(args[0].Trim());
+            Services.BotClient = new TelegramBotClient(args[0].Trim());
             adminChatId = long.Parse(args[1]);
 
-            botCommandHandlerService = new BotCommandHandlerService(botClient);
+            Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
+            {
+                new RegisterUserCommandHandler(),
+                new RemoveUserCommandHandler()
+            });
+
+            Services.ExtremelyNaggyBotDB = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
+                new IDatabaseQueryHandler[]
+                {
+                    new SetupQueryHandler(),
+                    new AddUserQueryHandler(),
+                    new RemoveUserQueryHandler(),
+                    new GetUserQueryHandler(),
+                    new GetUsersQueryHandler()
+                });
+
+            if (Services.ExtremelyNaggyBotDB.Execute(new SetupQuery()).GetAwaiter().GetResult())
+            {
+                Console.WriteLine("Database is initialized!");
+            }
+
+            Services.Clock = new Clock();
+            GreetingService greetingService = new GreetingService();
 
             try
             {
-                var me = botClient.GetMeAsync().Result;
+                var me = Services.BotClient.GetMeAsync().Result;
                 Console.WriteLine(
                     $"Hello, World! I am user {me.Id} and my name is {me.FirstName}."
                 );
@@ -48,53 +70,21 @@ namespace ExtremelyNaggyBot
                 Environment.Exit(0);
             }
 
-            IDatabase database = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
-                new IDatabaseQueryHandler[]
-                {
-                    new SetupQueryHandler()
-                });
-
-            if (database.Execute(new SetupQuery()).GetAwaiter().GetResult())
-            {
-                Console.WriteLine("Database is initialized!");
-            }
-
-            IClock clock = new Clock();
-            IDisposable subscription = clock.Tick
-                .ObserveOn(Scheduler.Default)
-                .Subscribe(async dateTime =>
-                {
-                    string message = string.Empty;
-
-                    DateTime d = TimeZoneInfo.ConvertTimeFromUtc(dateTime,
-                        TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(8), null, null));
-                    message = d.Hour switch
-                    {
-                        9 when d.Minute == 0 => "Good Morning!",
-                        12 when d.Minute == 0 => "Good Afternoon!",
-                        15 when d.Minute == 0 => "Nap Time!",
-                        21 when d.Minute == 0 => "Good Night!",
-                        _ => message
-                    };
-
-                    if (string.IsNullOrEmpty(message))
-                    {
-                        return;
-                    }
-
-                    await botClient.SendTextMessageAsync(new ChatId(adminChatId), message);
-                });
-
-            botClient.OnMessage += BotClientOnOnMessage;
-            botClient.StartReceiving();
-            botClient.SendTextMessageAsync(new ChatId(adminChatId), "Extremely Naggy Bot is online!");
+            Services.BotClient.OnMessage += BotClientOnOnMessage;
+            Services.BotClient.OnCallbackQuery += BotClientOnOnCallbackQuery;
+            Services.BotClient.StartReceiving();
+            Services.BotClient.SendTextMessageAsync(new ChatId(adminChatId), "Extremely Naggy Bot is online!");
 
             Console.WriteLine("Press any key to exit");
             Console.ReadKey();
 
-            botClient.StopReceiving();
-            subscription.Dispose();
-            clock.Dispose();
+            Services.BotClient.StopReceiving();
+            Services.Clock.Dispose();
+        }
+
+        private static async void BotClientOnOnCallbackQuery(object? sender, CallbackQueryEventArgs e)
+        {
+            await Services.BotClient.AnswerCallbackQueryAsync(e.CallbackQuery.Id, e.CallbackQuery.Data);
         }
 
         private static async void BotClientOnOnMessage(object sender, MessageEventArgs e)
@@ -106,7 +96,7 @@ namespace ExtremelyNaggyBot
                     e.Message.Entities[0].Type == MessageEntityType.BotCommand)
                 {
                     string command = e.Message.Text.Substring(e.Message.Entities[0].Offset);
-                    await botCommandHandlerService.Handle(e.Message.Chat,
+                    await Services.BotCommandHandlerService.Handle(e.Message.Chat,
                         e.Message.Text.Substring(e.Message.Entities[0].Offset));
 
                     return;
@@ -123,7 +113,7 @@ namespace ExtremelyNaggyBot
             catch (Exception ex)
             {
                 Console.WriteLine($"Internal Error has occurred. {ex}");
-                await botClient.SendTextMessageAsync(
+                await Services.BotClient.SendTextMessageAsync(
                     chatId: e.Message.Chat,
                     text: $"Internal Error has occurred."
                 );

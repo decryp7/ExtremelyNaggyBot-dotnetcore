@@ -13,18 +13,10 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
         private readonly IDictionary<string, IBotCommandHandler> botCommandHandlers =
             new Dictionary<string, IBotCommandHandler>(StringComparer.OrdinalIgnoreCase);
 
-        private readonly ITelegramBotClient botClient;
-
-        public BotCommandHandlerService(ITelegramBotClient botClient,
-            params IBotCommandHandler[] handlers)
+        public BotCommandHandlerService(IBotCommandHandler[] handlers)
         {
-            Guard.Ensure(botClient, nameof(botClient)).IsNotNull();
-
-            this.botClient = botClient;
-
             foreach (IBotCommandHandler botCommandHandler in handlers)
             {
-                botCommandHandler.BotClient = botClient;
                 botCommandHandlers[botCommandHandler.Command] = botCommandHandler;
             }
         }
@@ -45,8 +37,8 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
 
             if (!botCommandHandlers.TryGetValue(cmd, out IBotCommandHandler botCommandHandler))
             {
-                await botClient.SendTextMessageAsync(chat, $"Sorry {chat.FirstName}, I am unable to handle {command}.");
-                await botClient.SendTextMessageAsync(chat, $"{this.GetAvailableCommands()}");
+                await Services.BotClient.SendTextMessageAsync(chat, $"Sorry {chat.FirstName}, I am unable to handle {command}.");
+                await Services.BotClient.SendTextMessageAsync(chat, $"{this.GetAvailableCommands()}");
                 return;
             }
 

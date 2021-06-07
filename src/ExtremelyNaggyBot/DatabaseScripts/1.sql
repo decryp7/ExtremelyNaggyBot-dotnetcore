@@ -2,7 +2,7 @@
 	user_id INTEGER PRIMARY KEY,
 	first_name TEXT NOT NULL,
 	last_name TEXT NOT NULL,
-	timezone INTEGER NOT NULL
+	timezone_offset INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS reminders (
@@ -12,6 +12,16 @@ CREATE TABLE IF NOT EXISTS reminders (
 	recurring INTEGER NOT NULL,
 	FOREIGN KEY (user_id)
 		REFERENCES users (user_id)
+			ON DELETE CASCADE
+			ON UPDATE NO ACTION
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+	reminder_id INTEGER,
+	chat_id INTEGER,
+	acknowledge INTEGER NOT NULL,
+	FOREIGN KEY (reminder_id)
+		REFERENCES reminders (row_id)
 			ON DELETE CASCADE
 			ON UPDATE NO ACTION
 );

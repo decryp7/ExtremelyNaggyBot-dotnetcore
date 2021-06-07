@@ -18,7 +18,7 @@ namespace ExtremelyNaggyBot
             tickBehaviorSubject = new BehaviorSubject<DateTime>(DateTime.Now.ToUniversalTime())
                 .DisposeWith(this);
 
-            Observable.Interval(TimeSpan.FromMinutes(1), Scheduler.Default)
+            Observable.Interval(TimeSpan.FromSeconds(1), Scheduler.Default)
                 .Subscribe(l =>
                 {
                     DateTime utcDateTime = DateTime.Now.ToUniversalTime();
