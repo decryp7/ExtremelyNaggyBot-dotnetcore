@@ -38,7 +38,7 @@ namespace ExtremelyNaggyBot
                                     JsonSerializer.Serialize(new ReminderAcknowledgement(reminder.Id)))
                             }));
                         await Services.ExtremelyNaggyBotDB.Execute(
-                            new AddNaggingQuery(new Nagging(reminder.Id, reminder.UserId, reminder.Description, dateTime.AddMinutes(5))));
+                            new AddNaggingQuery(new Nagging(reminder.Id, reminder.UserId, reminder.Description, dateTime.AddMinutes(1))));
                     }
                 })
                 .DisposeWith(this);

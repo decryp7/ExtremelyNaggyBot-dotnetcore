@@ -15,7 +15,7 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                 using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "insert into naggings values (@reminder_id, @user_id, @description, @datetime)";
+                    command.CommandText = "insert into naggings(reminder_id, user_id, description, datetime) values (@reminder_id, @user_id, @description, @datetime)";
                     command.Parameters.Add(new SQLiteParameter("reminder_id", databaseQuery.Nagging.ReminderId));
                     command.Parameters.Add(new SQLiteParameter("user_id", databaseQuery.Nagging.UserId));
                     command.Parameters.Add(new SQLiteParameter("description", databaseQuery.Nagging.Description));

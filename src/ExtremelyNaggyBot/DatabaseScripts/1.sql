@@ -6,6 +6,7 @@
 );
 
 CREATE TABLE IF NOT EXISTS reminders (
+	reminder_id INTEGER PRIMARY KEY,
 	user_id INTEGER,
 	description TEXT NOT NULL,
 	datetime TEXT NOT NULL,
@@ -17,12 +18,13 @@ CREATE TABLE IF NOT EXISTS reminders (
 );
 
 CREATE TABLE IF NOT EXISTS naggings (
+	nagging_id INTEGER PRIMARY KEY,
 	reminder_id INTEGER,
 	user_id INTEGER,
 	description TEXT NOT NULL,
 	datetime TEXT NOT NULL,
 	FOREIGN KEY (reminder_id)
-		REFERENCES reminders (row_id)
+		REFERENCES reminders (reminder_id)
 			ON DELETE CASCADE
 			ON UPDATE NO ACTION
     FOREIGN KEY (user_id)

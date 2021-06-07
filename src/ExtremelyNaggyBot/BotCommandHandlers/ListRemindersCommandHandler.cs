@@ -32,7 +32,6 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                     TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(user.TimezoneOffset), null, null));
                 remindersStringBuilder.AppendLine(
                     $"{reminder.Id}: {reminder.Description} at {userDateTime} {reminder.Recurring.ToString().ToLower()}");
-                remindersStringBuilder.AppendLine("");
             }
 
             string result = remindersStringBuilder.ToString();
@@ -44,7 +43,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
             }
 
             await Services.BotClient.SendTextMessageAsync(chat,
-                $"Hello {chat.FirstName}, your reminders are as follows, {Environment.NewLine} {result}");
+                $"Hello {chat.FirstName}, your reminders are as follows,{Environment.NewLine}{result}");
         }
     }
 }

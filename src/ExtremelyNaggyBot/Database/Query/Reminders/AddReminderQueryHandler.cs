@@ -15,7 +15,7 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                 using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "insert into reminders values (@user_id, @description, @datetime, @recurring)";
+                    command.CommandText = "insert into reminders(user_id, description, datetime, recurring) values (@user_id, @description, @datetime, @recurring)";
                     command.Parameters.Add(new SQLiteParameter("user_id", databaseQuery.ReminderInfo.UserId));
                     command.Parameters.Add(new SQLiteParameter("description", databaseQuery.ReminderInfo.Description));
                     command.Parameters.Add(new SQLiteParameter("datetime", databaseQuery.ReminderInfo.DateTime.ToUniversalTime().ToString("s")));

@@ -15,8 +15,8 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                 using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "delete from reminders where rowid = @rowid";
-                    command.Parameters.Add(new SQLiteParameter("rowid", databaseQuery.ReminderId));
+                    command.CommandText = "delete from reminders where reminder_id = @reminder_id";
+                    command.Parameters.Add(new SQLiteParameter("reminder_id", databaseQuery.ReminderId));
 
                     result += command.ExecuteNonQuery();
                     transaction.Commit();

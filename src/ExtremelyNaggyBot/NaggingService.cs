@@ -35,7 +35,7 @@ namespace ExtremelyNaggyBot
                             }));
                         await Services.ExtremelyNaggyBotDB.Execute(
                             new UpdateNaggingDatetimeQuery(new Nagging(nagging.Id, nagging.ReminderId, nagging.UserId,
-                                nagging.Description, dateTime.AddMinutes(5))));
+                                nagging.Description, dateTime.AddMinutes(1))));
                     }
                 })
                 .DisposeWith(this);

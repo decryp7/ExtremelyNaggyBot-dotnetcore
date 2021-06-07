@@ -16,10 +16,9 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
             {
                 IList<Reminder> reminders = new List<Reminder>();
 
-                using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "select rowid, * from reminders";
+                    command.CommandText = "select * from reminders";
 
                     using (SQLiteDataReader dataReader = command.ExecuteReader())
                     {
@@ -30,7 +29,7 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                             DateTime dateTime = DateTime.ParseExact(dataReader["datetime"].ToString(), "s",
                                 CultureInfo.InvariantCulture);
 
-                            reminders.Add(new Reminder((long)dataReader["rowid"], (long)dataReader["user_id"],
+                            reminders.Add(new Reminder((long)dataReader["reminder_id"], (long)dataReader["user_id"],
                                 (string)dataReader["description"], dateTime, recurring));
                         }
                     }
