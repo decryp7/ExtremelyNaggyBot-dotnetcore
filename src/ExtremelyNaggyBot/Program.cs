@@ -42,6 +42,7 @@ namespace ExtremelyNaggyBot
 
             Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
             {
+                new AboutCommandHandler(),
                 //users
                 new RegisterUserCommandHandler(),
                 new UnregisterUserCommandHandler(),
