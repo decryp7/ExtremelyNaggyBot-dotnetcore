@@ -2,7 +2,7 @@
   "profiles": {
     "ExtremelyNaggyBot": {
       "commandName": "Project",
-      "commandLineArgs": "%ExtremelyNaggyBotToken% %BrowserlessBotAdminChatId%"
+      "commandLineArgs": "%DecryptologyTestBotToken% %BrowserlessBotAdminChatId%"
     }
   }
 }

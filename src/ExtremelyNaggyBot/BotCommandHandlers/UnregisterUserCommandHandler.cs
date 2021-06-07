@@ -2,16 +2,17 @@
 using System.Threading.Tasks;
 using ExtremelyNaggyBot.Database;
 using ExtremelyNaggyBot.Database.Query;
+using ExtremelyNaggyBot.Database.Query.Users;
 using Telegram.Bot.Types;
 
 namespace ExtremelyNaggyBot.BotCommandHandlers
 {
-    public class RemoveUserCommandHandler : IBotCommandHandler
+    public class UnregisterUserCommandHandler : IBotCommandHandler
     {
-        public string Command { get; } = "/remove";
+        public string Command { get; } = "/unregister";
 
         public string CommandDescription { get; } =
-            "/remove" +
+            "/unregister" +
             Environment.NewLine +
             "Remove yourself from bot's database.";
 

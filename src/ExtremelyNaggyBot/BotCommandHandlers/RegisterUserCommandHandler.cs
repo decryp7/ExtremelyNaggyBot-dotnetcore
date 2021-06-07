@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using ExtremelyNaggyBot.Database.DataModel;
 using ExtremelyNaggyBot.Database.Query;
+using ExtremelyNaggyBot.Database.Query.Users;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using User = ExtremelyNaggyBot.Database.DataModel.BotUser;
@@ -19,11 +20,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
         
         public async Task Handle(Chat chat, string commandArgs)
         {
-            if (!int.TryParse(commandArgs, out int timezoneOffset))
-            {
-                //Send error message to user
-                return;
-            }
+            int timezoneOffset = int.Parse(commandArgs);
 
             bool userAdded =
                 await Services.ExtremelyNaggyBotDB.Execute(new AddUserQuery(new User(chat.Id, chat.FirstName,

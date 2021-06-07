@@ -4,6 +4,7 @@ using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using ExtremelyNaggyBot.Database.DataModel;
 using ExtremelyNaggyBot.Database.Query;
+using ExtremelyNaggyBot.Database.Query.Users;
 using Telegram.Bot.Types;
 
 namespace ExtremelyNaggyBot

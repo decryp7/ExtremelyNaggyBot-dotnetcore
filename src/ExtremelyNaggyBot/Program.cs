@@ -9,9 +9,13 @@ using Telegram.Bot.Args;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using System.IO;
+using System.Net.Http.Headers;
+using System.Text.RegularExpressions;
 using ExtremelyNaggyBot.BotCommandHandlers;
 using ExtremelyNaggyBot.Database;
 using ExtremelyNaggyBot.Database.Query;
+using ExtremelyNaggyBot.Database.Query.Reminders;
+using ExtremelyNaggyBot.Database.Query.Users;
 using SimpleDatabase;
 using Telegram.Bot.Types.InlineQueryResults;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -35,18 +39,29 @@ namespace ExtremelyNaggyBot
 
             Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
             {
+                //users
                 new RegisterUserCommandHandler(),
-                new RemoveUserCommandHandler()
+                new UnregisterUserCommandHandler(),
+                //reminders
+                new RemindMeCommandHandler(),
+                new ListRemindersCommandHandler(),
+                new RemoveReminderCommandHandler()
             });
 
             Services.ExtremelyNaggyBotDB = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
                 new IDatabaseQueryHandler[]
                 {
                     new SetupQueryHandler(),
+                    //users
                     new AddUserQueryHandler(),
                     new RemoveUserQueryHandler(),
                     new GetUserQueryHandler(),
-                    new GetUsersQueryHandler()
+                    new GetUsersQueryHandler(),
+                    //reminders
+                    new AddReminderQueryHandler(),
+                    new RemoveReminderQueryHandler(),
+                    new GetReminderQueryHandler(),
+                    new GetRemindersQueryHandler()
                 });
 
             if (Services.ExtremelyNaggyBotDB.Execute(new SetupQuery()).GetAwaiter().GetResult())

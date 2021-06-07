@@ -1,11 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Data.SQLite;
 using System.Threading.Tasks;
 using ExtremelyNaggyBot.Database.DataModel;
 using SimpleDatabase.SQLite;
 
-namespace ExtremelyNaggyBot.Database.Query
+namespace ExtremelyNaggyBot.Database.Query.Users
 {
     public class GetUsersQueryHandler : SQLiteDatabaseQueryHandlerBase<GetUsersQuery, IEnumerable<BotUser>>
     {

@@ -2,11 +2,11 @@
 using System.Threading.Tasks;
 using SimpleDatabase.SQLite;
 
-namespace ExtremelyNaggyBot.Database.Query
+namespace ExtremelyNaggyBot.Database.Query.Reminders
 {
-    public class RemoveUserQueryHandler : SQLiteDatabaseQueryHandlerBase<RemoveUserQuery, bool>
+    public class RemoveReminderQueryHandler : SQLiteDatabaseQueryHandlerBase<RemoveReminderQuery, bool>
     {
-        public override Task<bool> Handle(SQLiteConnection connection, RemoveUserQuery databaseQuery)
+        public override Task<bool> Handle(SQLiteConnection connection, RemoveReminderQuery databaseQuery)
         {
             return Task.Run(() =>
             {
@@ -15,8 +15,8 @@ namespace ExtremelyNaggyBot.Database.Query
                 using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "delete from users where user_id = @user_id";
-                    command.Parameters.Add(new SQLiteParameter("user_id", databaseQuery.UserId));
+                    command.CommandText = "delete from reminders where rowid = @rowid";
+                    command.Parameters.Add(new SQLiteParameter("rowid", databaseQuery.ReminderId));
 
                     result += command.ExecuteNonQuery();
                     transaction.Commit();

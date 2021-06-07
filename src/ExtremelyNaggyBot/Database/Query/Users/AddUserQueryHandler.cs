@@ -2,7 +2,7 @@
 using System.Threading.Tasks;
 using SimpleDatabase.SQLite;
 
-namespace ExtremelyNaggyBot.Database.Query
+namespace ExtremelyNaggyBot.Database.Query.Users
 {
     public class AddUserQueryHandler : SQLiteDatabaseQueryHandlerBase<AddUserQuery, bool>
     {
@@ -16,10 +16,10 @@ namespace ExtremelyNaggyBot.Database.Query
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
                     command.CommandText = "insert into users values (@user_id, @first_name, @last_name, @timezone_offset)";
-                    command.Parameters.Add(new SQLiteParameter("user_id", databaseQuery.User.Id));
-                    command.Parameters.Add(new SQLiteParameter("first_name", databaseQuery.User.FirstName));
-                    command.Parameters.Add(new SQLiteParameter("last_name", databaseQuery.User.LastName));
-                    command.Parameters.Add(new SQLiteParameter("timezone_offset", databaseQuery.User.TimezoneOffset));
+                    command.Parameters.Add(new SQLiteParameter("user_id", databaseQuery.UserInfo.Id));
+                    command.Parameters.Add(new SQLiteParameter("first_name", databaseQuery.UserInfo.FirstName));
+                    command.Parameters.Add(new SQLiteParameter("last_name", databaseQuery.UserInfo.LastName));
+                    command.Parameters.Add(new SQLiteParameter("timezone_offset", databaseQuery.UserInfo.TimezoneOffset));
 
                     result += command.ExecuteNonQuery();
                     transaction.Commit();

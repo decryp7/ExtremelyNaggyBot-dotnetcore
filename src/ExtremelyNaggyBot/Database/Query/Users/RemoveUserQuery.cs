@@ -1,7 +1,6 @@
-﻿using ExtremelyNaggyBot.Database.DataModel;
-using SimpleDatabase;
+﻿using SimpleDatabase;
 
-namespace ExtremelyNaggyBot.Database.Query
+namespace ExtremelyNaggyBot.Database.Query.Users
 {
     public class RemoveUserQuery : IDatabaseQuery<RemoveUserQuery, bool>
     {
