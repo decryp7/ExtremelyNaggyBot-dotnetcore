@@ -22,7 +22,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                 return;
             }
 
-            bool reminderRemoved = await Services.ExtremelyNaggyBotDB.Execute(new RemoveReminderQuery(reminderId));
+            bool reminderRemoved = await Services.ExtremelyNaggyBotDB.Execute(new RemoveReminderQuery(reminderId, chat.Id));
 
             if (reminderRemoved)
             {
