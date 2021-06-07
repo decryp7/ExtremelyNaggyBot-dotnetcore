@@ -21,7 +21,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
         public async Task Handle(Chat chat, string commandArgs)
         {
             IEnumerable<Reminder> reminders =
-                await Services.ExtremelyNaggyBotDB.Execute(new GetRemindersQuery(chat.Id));
+                await Services.ExtremelyNaggyBotDB.Execute(new GetRemindersQueryByUser(chat.Id));
 
             BotUser user = await Services.ExtremelyNaggyBotDB.Execute(new GetUserQuery(chat.Id));
 

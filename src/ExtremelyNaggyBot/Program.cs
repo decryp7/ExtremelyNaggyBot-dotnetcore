@@ -13,12 +13,15 @@ using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
 using ExtremelyNaggyBot.BotCommandHandlers;
 using ExtremelyNaggyBot.Database;
+using ExtremelyNaggyBot.Database.DataModel;
 using ExtremelyNaggyBot.Database.Query;
 using ExtremelyNaggyBot.Database.Query.Reminders;
 using ExtremelyNaggyBot.Database.Query.Users;
+using Newtonsoft.Json;
 using SimpleDatabase;
 using Telegram.Bot.Types.InlineQueryResults;
 using Telegram.Bot.Types.ReplyMarkups;
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace ExtremelyNaggyBot
 {
@@ -45,7 +48,8 @@ namespace ExtremelyNaggyBot
                 //reminders
                 new RemindMeCommandHandler(),
                 new ListRemindersCommandHandler(),
-                new RemoveReminderCommandHandler()
+                new RemoveReminderCommandHandler(),
+                new RemoveAllRemindersCommandHandler()
             });
 
             Services.ExtremelyNaggyBotDB = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
@@ -59,9 +63,16 @@ namespace ExtremelyNaggyBot
                     new GetUsersQueryHandler(),
                     //reminders
                     new AddReminderQueryHandler(),
-                    new RemoveReminderQueryHandler(),
+                    new RemoveReminderHandler(),
                     new GetReminderQueryHandler(),
-                    new GetRemindersQueryHandler()
+                    new GetRemindersQueryByUserHandler(),
+                    new GetRemindersQueryHandler(),
+                    new RemoveRemindersByUserQueryHandler(),
+                    new AcknowledgeReminderQueryHandler(),
+                    //nagging
+                    new AddNaggingQueryHandler(),
+                    new GetNaggingsQueryHandler(),
+                    new UpdateNaggingDatetimeQueryHandler()
                 });
 
             if (Services.ExtremelyNaggyBotDB.Execute(new SetupQuery()).GetAwaiter().GetResult())
@@ -70,7 +81,8 @@ namespace ExtremelyNaggyBot
             }
 
             Services.Clock = new Clock();
-            GreetingService greetingService = new GreetingService();
+            ReminderService reminderService = new ReminderService();
+            NaggingService naggingService = new NaggingService();
 
             try
             {
@@ -99,6 +111,13 @@ namespace ExtremelyNaggyBot
 
         private static async void BotClientOnOnCallbackQuery(object? sender, CallbackQueryEventArgs e)
         {
+            ReminderAcknowledgement reminderAcknowledgement = JsonSerializer.Deserialize<ReminderAcknowledgement>(e.CallbackQuery.Data);
+
+            if (reminderAcknowledgement != null)
+            {
+                await Services.ExtremelyNaggyBotDB.Execute(new AcknowledgeReminderQuery(reminderAcknowledgement));
+            }
+
             await Services.BotClient.AnswerCallbackQueryAsync(e.CallbackQuery.Id, e.CallbackQuery.Data);
         }
 

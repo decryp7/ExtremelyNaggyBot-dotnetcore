@@ -34,14 +34,9 @@ namespace ExtremelyNaggyBot.Database.DataModel
         }
 
         public Reminder(long id, long userId, string description, DateTime dateTime, Recurring recurring)
+            : this(userId, description, dateTime, recurring)
         {
-            Guard.Ensure(description, nameof(description)).IsNotNullOrEmpty();
-
             Id = id;
-            UserId = userId;
-            Description = description;
-            DateTime = dateTime;
-            Recurring = recurring;
         }
     }
 }

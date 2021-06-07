@@ -8,35 +8,33 @@ using SimpleDatabase.SQLite;
 
 namespace ExtremelyNaggyBot.Database.Query.Reminders
 {
-    public class GetRemindersQueryHandler : SQLiteDatabaseQueryHandlerBase<GetRemindersQuery, IEnumerable<Reminder>>
+    public class GetNaggingsQueryHandler : SQLiteDatabaseQueryHandlerBase<GetNaggingsQuery, IEnumerable<Nagging>>
     {
-        public override Task<IEnumerable<Reminder>> Handle(SQLiteConnection connection, GetRemindersQuery databaseQuery)
+        public override Task<IEnumerable<Nagging>> Handle(SQLiteConnection connection, GetNaggingsQuery databaseQuery)
         {
             return Task.Run(() =>
             {
-                IList<Reminder> reminders = new List<Reminder>();
+                IList<Nagging> naggings = new List<Nagging>();
 
                 using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "select rowid, * from reminders";
+                    command.CommandText = "select rowid, * from naggings";
 
                     using (SQLiteDataReader dataReader = command.ExecuteReader())
                     {
                         while (dataReader.Read())
                         {
-                            Recurring recurring = (Recurring)Enum.Parse(typeof(Recurring), dataReader["recurring"].ToString(), true);
-
                             DateTime dateTime = DateTime.ParseExact(dataReader["datetime"].ToString(), "s",
                                 CultureInfo.InvariantCulture);
 
-                            reminders.Add(new Reminder((long)dataReader["rowid"], (long)dataReader["user_id"],
-                                (string)dataReader["description"], dateTime, recurring));
+                            naggings.Add(new Nagging((long)dataReader["rowid"], (long)dataReader["reminder_id"],
+                                (long)dataReader["user_id"], (string)dataReader["description"], dateTime));
                         }
                     }
                 }
 
-                return (IEnumerable<Reminder>)reminders;
+                return (IEnumerable<Nagging>) naggings;
             });
         }
     }

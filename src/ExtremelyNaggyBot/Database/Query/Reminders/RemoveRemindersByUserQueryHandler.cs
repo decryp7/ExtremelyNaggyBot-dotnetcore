@@ -4,9 +4,9 @@ using SimpleDatabase.SQLite;
 
 namespace ExtremelyNaggyBot.Database.Query.Reminders
 {
-    public class RemoveReminderQueryHandler : SQLiteDatabaseQueryHandlerBase<RemoveReminderQuery, bool>
+    public class RemoveRemindersByUserQueryHandler : SQLiteDatabaseQueryHandlerBase<RemoveRemindersByUserQuery, int>
     {
-        public override Task<bool> Handle(SQLiteConnection connection, RemoveReminderQuery databaseQuery)
+        public override Task<int> Handle(SQLiteConnection connection, RemoveRemindersByUserQuery databaseQuery)
         {
             return Task.Run(() =>
             {
@@ -15,14 +15,14 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                 using (SQLiteTransaction transaction = connection.BeginTransaction())
                 using (SQLiteCommand command = connection.CreateCommand())
                 {
-                    command.CommandText = "delete from reminders where rowid = @rowid";
-                    command.Parameters.Add(new SQLiteParameter("rowid", databaseQuery.ReminderId));
+                    command.CommandText = "delete from reminders where user_id = @user_id";
+                    command.Parameters.Add(new SQLiteParameter("user_id", databaseQuery.UserId));
 
                     result += command.ExecuteNonQuery();
                     transaction.Commit();
                 }
 
-                return result != 0;
+                return result;
             });
         }
     }

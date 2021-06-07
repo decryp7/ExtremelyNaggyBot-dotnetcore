@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ExtremelyNaggyBot.Database.DataModel;
 using ExtremelyNaggyBot.Database.Query.Reminders;
+using ExtremelyNaggyBot.Database.Query.Users;
 using Telegram.Bot.Types;
 
 namespace ExtremelyNaggyBot.BotCommandHandlers
@@ -31,9 +32,21 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                 return;
             }
 
+            BotUser botUser = await Services.ExtremelyNaggyBotDB.Execute(new GetUserQuery(chat.Id));
+
+            if (botUser == null)
+            {
+                await Services.BotClient.SendTextMessageAsync(chat,
+                    $"Hi {chat.FirstName}, please register first.");
+                return;
+            }
+
+            string timezoneOffset = botUser.TimezoneOffset > 0
+                ? $"+{botUser.TimezoneOffset}"
+                : $"{botUser.TimezoneOffset}";
             string description = match.Groups[1].Value;
             DateTime dateTime =
-                DateTime.ParseExact(match.Groups[2].Value, "dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture);
+                DateTime.ParseExact($"{match.Groups[2].Value}UTC{timezoneOffset}", "dd/MM/yyyy HH:mmUTCz", CultureInfo.InvariantCulture);
 
             Recurring recurring = (Recurring)Enum.Parse(typeof(Recurring), match.Groups[3].Value, true);
 

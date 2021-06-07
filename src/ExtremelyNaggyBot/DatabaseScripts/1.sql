@@ -16,12 +16,17 @@ CREATE TABLE IF NOT EXISTS reminders (
 			ON UPDATE NO ACTION
 );
 
-CREATE TABLE IF NOT EXISTS notifications (
+CREATE TABLE IF NOT EXISTS naggings (
 	reminder_id INTEGER,
-	chat_id INTEGER,
-	acknowledge INTEGER NOT NULL,
+	user_id INTEGER,
+	description TEXT NOT NULL,
+	datetime TEXT NOT NULL,
 	FOREIGN KEY (reminder_id)
 		REFERENCES reminders (row_id)
+			ON DELETE CASCADE
+			ON UPDATE NO ACTION
+    FOREIGN KEY (user_id)
+		REFERENCES users (user_id)
 			ON DELETE CASCADE
 			ON UPDATE NO ACTION
 );
@@ -30,5 +35,7 @@ CREATE TABLE IF NOT EXISTS db_info (
 	major_version INTEGER,
 	minor_version INTEGER
 );
+
+INSERT INTO db_info values (1, 0);
 
 
