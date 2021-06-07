@@ -27,7 +27,7 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                             Recurring recurring = (Recurring)Enum.Parse(typeof(Recurring), dataReader["recurring"].ToString(), true);
 
                             DateTime dateTime = DateTime.ParseExact(dataReader["datetime"].ToString(), "s",
-                                CultureInfo.InvariantCulture);
+                                CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal);
 
                             reminders.Add(new Reminder((long)dataReader["reminder_id"], (long)dataReader["user_id"],
                                 (string)dataReader["description"], dateTime, recurring));

@@ -46,7 +46,8 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                 : $"{botUser.TimezoneOffset}";
             string description = match.Groups[1].Value;
             DateTime dateTime =
-                DateTime.ParseExact($"{match.Groups[2].Value}UTC{timezoneOffset}", "dd/MM/yyyy HH:mmUTCz", CultureInfo.InvariantCulture);
+                DateTime.ParseExact($"{match.Groups[2].Value}UTC{timezoneOffset}", "dd/MM/yyyy HH:mmUTCz",
+                    CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal);
 
             Recurring recurring = (Recurring)Enum.Parse(typeof(Recurring), match.Groups[3].Value, true);
 
@@ -56,7 +57,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
             if (result)
             {
                 await Services.BotClient.SendTextMessageAsync(chat,
-                    $"Hello {chat.FirstName}, I will remind you about {description} on {dateTime:dd/MM/yyyy HH:mm} {recurring.ToString().ToLower()}.");
+                    $"Hello {chat.FirstName}, I will remind you about {description} on {match.Groups[2].Value} {recurring.ToString().ToLower()}.");
             }
         }
     }

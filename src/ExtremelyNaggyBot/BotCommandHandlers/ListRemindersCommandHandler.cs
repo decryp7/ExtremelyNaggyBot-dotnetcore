@@ -31,7 +31,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                 DateTime userDateTime = TimeZoneInfo.ConvertTimeFromUtc(reminder.DateTime,
                     TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(user.TimezoneOffset), null, null));
                 remindersStringBuilder.AppendLine(
-                    $"{reminder.Id}: {reminder.Description} at {userDateTime} {reminder.Recurring.ToString().ToLower()}");
+                    $"{reminder.Id}: {reminder.Description} at {userDateTime:dd/MM/yyyy HH:mm} {reminder.Recurring.ToString().ToLower()}");
             }
 
             string result = remindersStringBuilder.ToString();

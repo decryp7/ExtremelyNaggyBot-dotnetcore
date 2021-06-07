@@ -56,6 +56,7 @@ namespace ExtremelyNaggyBot
                 new IDatabaseQueryHandler[]
                 {
                     new SetupQueryHandler(),
+                    new CleanupQueryHandler(),
                     //users
                     new AddUserQueryHandler(),
                     new RemoveUserQueryHandler(),
@@ -78,6 +79,11 @@ namespace ExtremelyNaggyBot
             if (Services.ExtremelyNaggyBotDB.Execute(new SetupQuery()).GetAwaiter().GetResult())
             {
                 Console.WriteLine("Database is initialized!");
+            }
+
+            if (Services.ExtremelyNaggyBotDB.Execute(new CleanupQuery()).GetAwaiter().GetResult())
+            {
+                Console.WriteLine("Database is cleaned up!");
             }
 
             Services.Clock = new Clock();

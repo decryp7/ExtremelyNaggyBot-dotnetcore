@@ -25,7 +25,7 @@ namespace ExtremelyNaggyBot.Database.Query.Reminders
                         while (dataReader.Read())
                         {
                             DateTime dateTime = DateTime.ParseExact(dataReader["datetime"].ToString(), "s",
-                                CultureInfo.InvariantCulture);
+                                CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal);
 
                             naggings.Add(new Nagging((long)dataReader["nagging_id"], (long)dataReader["reminder_id"],
                                 (long)dataReader["user_id"], (string)dataReader["description"], dateTime));
