@@ -38,6 +38,6 @@ CREATE TABLE IF NOT EXISTS db_info (
 	minor_version INTEGER
 );
 
-INSERT INTO db_info values (1, 0);
+REPLACE INTO db_info (rowid, major_version, minor_version) values (1, 1, 0);
 
 
