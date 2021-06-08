@@ -5,6 +5,9 @@
 	timezone_offset INTEGER NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS user_index
+	ON users (user_id);
+
 CREATE TABLE IF NOT EXISTS reminders (
 	reminder_id INTEGER PRIMARY KEY,
 	user_id INTEGER,
@@ -16,6 +19,9 @@ CREATE TABLE IF NOT EXISTS reminders (
 			ON DELETE CASCADE
 			ON UPDATE NO ACTION
 );
+
+CREATE INDEX IF NOT EXISTS reminder_index
+	ON reminders (reminder_id);
 
 CREATE TABLE IF NOT EXISTS naggings (
 	nagging_id INTEGER PRIMARY KEY,
@@ -32,6 +38,9 @@ CREATE TABLE IF NOT EXISTS naggings (
 			ON DELETE CASCADE
 			ON UPDATE NO ACTION
 );
+
+CREATE INDEX IF NOT EXISTS nagging_index
+	ON naggings (nagging_id);
 
 CREATE TABLE IF NOT EXISTS db_info (
 	major_version INTEGER,

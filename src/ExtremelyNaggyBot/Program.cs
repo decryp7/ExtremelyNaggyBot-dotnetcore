@@ -58,6 +58,7 @@ namespace ExtremelyNaggyBot
                 {
                     new SetupQueryHandler(),
                     new CleanupQueryHandler(),
+                    new VacuumQueryHandler(),
                     //users
                     new AddUserQueryHandler(),
                     new RemoveUserQueryHandler(),
@@ -90,6 +91,7 @@ namespace ExtremelyNaggyBot
             Services.Clock = new Clock();
             ReminderService reminderService = new ReminderService();
             NaggingService naggingService = new NaggingService();
+            DatabaseVacuumService databaseVacuumService = new DatabaseVacuumService();
 
             try
             {
