@@ -36,7 +36,7 @@ namespace ExtremelyNaggyBot
             {
                 o.Dsn = "https://eff76a8be6d44c13a8b0ff03f6131b8c@o879169.ingest.sentry.io/5831631";
                 // When configuring for the first time, to see what the SDK is doing:
-                o.Debug = true;
+                //o.Debug = true;
                 // Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
                 // We recommend adjusting this value in production.
                 o.TracesSampleRate = 1.0;
