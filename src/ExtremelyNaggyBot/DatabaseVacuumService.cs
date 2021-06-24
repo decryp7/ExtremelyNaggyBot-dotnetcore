@@ -23,7 +23,7 @@ namespace ExtremelyNaggyBot
                 .Select(list => list.Last())
                 .Subscribe(async dateTime =>
                 {
-                    using (SentryPerformanceMonitor.Measure("DatabaseVacuumService", "Vacuum"))
+                    using (SentryPerformanceMonitor.Measure("Vacuum", "Vacuum Database"))
                     {
                         await Services.ExtremelyNaggyBotDB.Execute(new VacuumQuery());
                     }

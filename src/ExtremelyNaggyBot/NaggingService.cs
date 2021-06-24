@@ -20,7 +20,7 @@ namespace ExtremelyNaggyBot
                 .ObserveOn(Scheduler.Default)
                 .Subscribe(async dateTime =>
                 {
-                    using (SentryPerformanceMonitor.Measure("NaggingService", "SendNaggingMessages"))
+                    using (SentryPerformanceMonitor.Measure("SendNaggingMessages", "Send nagging messages"))
                     {
                         IEnumerable<Nagging> naggings =
                             await Services.ExtremelyNaggyBotDB.Execute(new GetNaggingsQuery());

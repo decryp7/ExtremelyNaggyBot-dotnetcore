@@ -36,7 +36,7 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                 cmdArgs = command.Substring(indexOfFirstSpace);
             }
 
-            using (SentryPerformanceMonitor.Measure("BotCommandHandlerService", cmd))
+            using (SentryPerformanceMonitor.Measure(cmd, command))
             {
                 if (!botCommandHandlers.TryGetValue(cmd, out IBotCommandHandler botCommandHandler))
                 {
