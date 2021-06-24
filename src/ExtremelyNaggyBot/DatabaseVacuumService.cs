@@ -7,6 +7,7 @@ using System.Text.Json;
 using ExtremelyNaggyBot.Database.DataModel;
 using ExtremelyNaggyBot.Database.Query;
 using ExtremelyNaggyBot.Database.Query.Reminders;
+using ExtremelyNaggyBot.Sentry;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.ReplyMarkups;
 
@@ -22,7 +23,10 @@ namespace ExtremelyNaggyBot
                 .Select(list => list.Last())
                 .Subscribe(async dateTime =>
                 {
-                    await Services.ExtremelyNaggyBotDB.Execute(new VacuumQuery());
+                    using (SentryPerformanceMonitor.Measure("DatabaseVacuumService", "Vacuum"))
+                    {
+                        await Services.ExtremelyNaggyBotDB.Execute(new VacuumQuery());
+                    }
                 })
                 .DisposeWith(this);
         }

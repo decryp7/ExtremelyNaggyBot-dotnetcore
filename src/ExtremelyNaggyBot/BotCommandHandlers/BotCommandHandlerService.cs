@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
+using ExtremelyNaggyBot.Sentry;
 using GuardLibrary;
 using Telegram.Bot;
 using Telegram.Bot.Types;
@@ -35,14 +36,18 @@ namespace ExtremelyNaggyBot.BotCommandHandlers
                 cmdArgs = command.Substring(indexOfFirstSpace);
             }
 
-            if (!botCommandHandlers.TryGetValue(cmd, out IBotCommandHandler botCommandHandler))
+            using (SentryPerformanceMonitor.Measure("BotCommandHandlerService", cmd))
             {
-                await Services.BotClient.SendTextMessageAsync(chat, $"Sorry {chat.FirstName}, I am unable to handle {command}.");
-                await Services.BotClient.SendTextMessageAsync(chat, $"{this.GetAvailableCommands()}");
-                return;
-            }
+                if (!botCommandHandlers.TryGetValue(cmd, out IBotCommandHandler botCommandHandler))
+                {
+                    await Services.BotClient.SendTextMessageAsync(chat,
+                        $"Sorry {chat.FirstName}, I am unable to handle {command}.");
+                    await Services.BotClient.SendTextMessageAsync(chat, $"{this.GetAvailableCommands()}");
+                    return;
+                }
 
-            await botCommandHandler.Handle(chat, cmdArgs);
+                await botCommandHandler.Handle(chat, cmdArgs);
+            }
         }
 
         public string GetAvailableCommands()

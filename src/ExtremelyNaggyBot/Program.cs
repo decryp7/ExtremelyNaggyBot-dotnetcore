@@ -18,6 +18,7 @@ using ExtremelyNaggyBot.Database.Query;
 using ExtremelyNaggyBot.Database.Query.Reminders;
 using ExtremelyNaggyBot.Database.Query.Users;
 using Newtonsoft.Json;
+using Sentry;
 using SimpleDatabase;
 using Telegram.Bot.Types.InlineQueryResults;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -31,91 +32,105 @@ namespace ExtremelyNaggyBot
 
         static void Main(string[] args)
         {
-            if (args.Length < 2)
+            using (SentrySdk.Init(o =>
             {
-                Console.WriteLine("Missing parameters! Mandatory parameters are TELEGRAM_BOT_TOKEN ADMIN_CHATID in this order.");
-                Environment.Exit(0);
-            }
-
-            Services.BotClient = new TelegramBotClient(args[0].Trim());
-            adminChatId = long.Parse(args[1]);
-
-            Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
+                o.Dsn = "https://eff76a8be6d44c13a8b0ff03f6131b8c@o879169.ingest.sentry.io/5831631";
+                // When configuring for the first time, to see what the SDK is doing:
+                o.Debug = true;
+                // Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
+                // We recommend adjusting this value in production.
+                o.TracesSampleRate = 1.0;
+            }))
             {
-                new AboutCommandHandler(),
-                //users
-                new RegisterUserCommandHandler(),
-                new UnregisterUserCommandHandler(),
-                //reminders
-                new RemindMeCommandHandler(),
-                new ListRemindersCommandHandler(),
-                new RemoveReminderCommandHandler(),
-                new RemoveAllRemindersCommandHandler()
-            });
+                // App code goes here. Dispose the SDK before exiting to flush events.
 
-            Services.ExtremelyNaggyBotDB = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
-                new IDatabaseQueryHandler[]
+                if (args.Length < 2)
                 {
-                    new SetupQueryHandler(),
-                    new CleanupQueryHandler(),
-                    new VacuumQueryHandler(),
+                    Console.WriteLine(
+                        "Missing parameters! Mandatory parameters are TELEGRAM_BOT_TOKEN ADMIN_CHATID in this order.");
+                    Environment.Exit(0);
+                }
+
+                Services.BotClient = new TelegramBotClient(args[0].Trim());
+                adminChatId = long.Parse(args[1]);
+
+                Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
+                {
+                    new AboutCommandHandler(),
                     //users
-                    new AddUserQueryHandler(),
-                    new RemoveUserQueryHandler(),
-                    new GetUserQueryHandler(),
-                    new GetUsersQueryHandler(),
+                    new RegisterUserCommandHandler(),
+                    new UnregisterUserCommandHandler(),
                     //reminders
-                    new AddReminderQueryHandler(),
-                    new RemoveReminderHandler(),
-                    new GetReminderQueryHandler(),
-                    new GetRemindersQueryByUserHandler(),
-                    new GetRemindersQueryHandler(),
-                    new RemoveRemindersByUserQueryHandler(),
-                    new AcknowledgeReminderQueryHandler(),
-                    //nagging
-                    new AddNaggingQueryHandler(),
-                    new GetNaggingsQueryHandler(),
-                    new UpdateNaggingDatetimeQueryHandler()
+                    new RemindMeCommandHandler(),
+                    new ListRemindersCommandHandler(),
+                    new RemoveReminderCommandHandler(),
+                    new RemoveAllRemindersCommandHandler()
                 });
 
-            if (Services.ExtremelyNaggyBotDB.Execute(new SetupQuery()).GetAwaiter().GetResult())
-            {
-                Console.WriteLine("Database is initialized!");
+                Services.ExtremelyNaggyBotDB = new ExtremelyNaggyBotDB(Path.Combine("data", "extremelynaggybot.db"),
+                    new IDatabaseQueryHandler[]
+                    {
+                        new SetupQueryHandler(),
+                        new CleanupQueryHandler(),
+                        new VacuumQueryHandler(),
+                        //users
+                        new AddUserQueryHandler(),
+                        new RemoveUserQueryHandler(),
+                        new GetUserQueryHandler(),
+                        new GetUsersQueryHandler(),
+                        //reminders
+                        new AddReminderQueryHandler(),
+                        new RemoveReminderHandler(),
+                        new GetReminderQueryHandler(),
+                        new GetRemindersQueryByUserHandler(),
+                        new GetRemindersQueryHandler(),
+                        new RemoveRemindersByUserQueryHandler(),
+                        new AcknowledgeReminderQueryHandler(),
+                        //nagging
+                        new AddNaggingQueryHandler(),
+                        new GetNaggingsQueryHandler(),
+                        new UpdateNaggingDatetimeQueryHandler()
+                    });
+
+                if (Services.ExtremelyNaggyBotDB.Execute(new SetupQuery()).GetAwaiter().GetResult())
+                {
+                    Console.WriteLine("Database is initialized!");
+                }
+
+                if (Services.ExtremelyNaggyBotDB.Execute(new CleanupQuery()).GetAwaiter().GetResult())
+                {
+                    Console.WriteLine("Database is cleaned up!");
+                }
+
+                Services.Clock = new Clock();
+                ReminderService reminderService = new ReminderService();
+                NaggingService naggingService = new NaggingService();
+                DatabaseVacuumService databaseVacuumService = new DatabaseVacuumService();
+
+                try
+                {
+                    var me = Services.BotClient.GetMeAsync().Result;
+                    Console.WriteLine(
+                        $"Hello, World! I am user {me.Id} and my name is {me.FirstName}."
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"There is an exception starting telegram bot client. {ex}");
+                    Environment.Exit(0);
+                }
+
+                Services.BotClient.OnMessage += BotClientOnOnMessage;
+                Services.BotClient.OnCallbackQuery += BotClientOnOnCallbackQuery;
+                Services.BotClient.StartReceiving();
+                Services.BotClient.SendTextMessageAsync(new ChatId(adminChatId), "Extremely Naggy Bot is online!");
+
+                Console.WriteLine("Press any key to exit");
+                Console.ReadKey();
+
+                Services.BotClient.StopReceiving();
+                Services.Clock.Dispose();
             }
-
-            if (Services.ExtremelyNaggyBotDB.Execute(new CleanupQuery()).GetAwaiter().GetResult())
-            {
-                Console.WriteLine("Database is cleaned up!");
-            }
-
-            Services.Clock = new Clock();
-            ReminderService reminderService = new ReminderService();
-            NaggingService naggingService = new NaggingService();
-            DatabaseVacuumService databaseVacuumService = new DatabaseVacuumService();
-
-            try
-            {
-                var me = Services.BotClient.GetMeAsync().Result;
-                Console.WriteLine(
-                    $"Hello, World! I am user {me.Id} and my name is {me.FirstName}."
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"There is an exception starting telegram bot client. {ex}");
-                Environment.Exit(0);
-            }
-
-            Services.BotClient.OnMessage += BotClientOnOnMessage;
-            Services.BotClient.OnCallbackQuery += BotClientOnOnCallbackQuery;
-            Services.BotClient.StartReceiving();
-            Services.BotClient.SendTextMessageAsync(new ChatId(adminChatId), "Extremely Naggy Bot is online!");
-
-            Console.WriteLine("Press any key to exit");
-            Console.ReadKey();
-
-            Services.BotClient.StopReceiving();
-            Services.Clock.Dispose();
         }
 
         private static async void BotClientOnOnCallbackQuery(object? sender, CallbackQueryEventArgs e)
