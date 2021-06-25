@@ -56,6 +56,7 @@ namespace ExtremelyNaggyBot
 
                 Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
                 {
+                    new StartCommandHandler(),
                     new AboutCommandHandler(),
                     //users
                     new RegisterUserCommandHandler(),
@@ -166,6 +167,7 @@ namespace ExtremelyNaggyBot
                 }
 
                 string msg = $"Received a text message from {e.Message.From.FirstName}. Message: {e.Message.Text}";
+                SentrySdk.CaptureMessage(msg);
                 Console.WriteLine(msg);
             }
             catch (Exception ex)
