@@ -42,7 +42,7 @@ namespace ExtremelyNaggyBot
                             await Services.ExtremelyNaggyBotDB.Execute(
                                 new UpdateNaggingDatetimeQuery(new Nagging(nagging.Id, nagging.ReminderId,
                                     nagging.UserId,
-                                    nagging.Description, dateTime.AddMinutes(1))));
+                                    nagging.Description, dateTime.AddMinutes(60))));
                         }
                     }
                 })
