@@ -34,7 +34,7 @@ namespace ExtremelyNaggyBot
         {
             using (SentrySdk.Init(o =>
             {
-                o.Dsn = "https://6dc01bc529194efe95cb57e14b9f5fa0@sentry.decryptology.net/2";
+                o.Dsn = "http://f960d89d24fd4182a56b467814aa937f@sentry.decryptology.net/2";
                 // When configuring for the first time, to see what the SDK is doing:
                 //o.Debug = true;
                 // Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
