@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
@@ -11,6 +13,7 @@ using Telegram.Bot.Types.Enums;
 using System.IO;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
+using ExtremelyNaggyBot.AppEnvironment;
 using ExtremelyNaggyBot.BotCommandHandlers;
 using ExtremelyNaggyBot.Database;
 using ExtremelyNaggyBot.Database.DataModel;
@@ -29,30 +32,32 @@ namespace ExtremelyNaggyBot
     class Program
     {
         private static long adminChatId;
+        private static AppEnvironmentVariables appEnvironmentVariables = new AppEnvironmentVariables();
 
         static void Main(string[] args)
         {
-            using (SentrySdk.Init(o =>
+            string sentryDSN = appEnvironmentVariables.Read(AppEnvironmentVariableKeys.SENTRY_DSN);
+            if (string.IsNullOrEmpty(sentryDSN))
             {
-                o.Dsn = "https://f83e02345a9f4b038903ad2e0baa66b5@sentry.decryptology.net/2";
-                // When configuring for the first time, to see what the SDK is doing:
-                //o.Debug = true;
-                // Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
-                // We recommend adjusting this value in production.
-                o.TracesSampleRate = 1.0;
-            }))
+                Console.WriteLine(
+                    "Missing SENTRY_DSN Environment Variable");
+                Environment.Exit(0);
+            }
+
+            using (SentrySdk.Init(o =>
+                   {
+                       o.Dsn = sentryDSN;
+                       // When configuring for the first time, to see what the SDK is doing:
+                       //o.Debug = true;
+                       // Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
+                       // We recommend adjusting this value in production.
+                       o.TracesSampleRate = 1.0;
+                   }))
             {
                 // App code goes here. Dispose the SDK before exiting to flush events.
 
-                if (args.Length < 2)
-                {
-                    Console.WriteLine(
-                        "Missing parameters! Mandatory parameters are TELEGRAM_BOT_TOKEN ADMIN_CHATID in this order.");
-                    Environment.Exit(0);
-                }
-
-                Services.BotClient = new TelegramBotClient(args[0].Trim());
-                adminChatId = long.Parse(args[1]);
+                Services.BotClient = new TelegramBotClient(appEnvironmentVariables.Read(AppEnvironmentVariableKeys.TELEGRAM_BOT_TOKEN));
+                adminChatId = appEnvironmentVariables.Read(AppEnvironmentVariableKeys.ADMIN_CHATID);
 
                 Services.BotCommandHandlerService = new BotCommandHandlerService(new IBotCommandHandler[]
                 {
