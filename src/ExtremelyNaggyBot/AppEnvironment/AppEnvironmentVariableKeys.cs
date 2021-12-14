@@ -16,5 +16,8 @@ namespace ExtremelyNaggyBot.AppEnvironment
 
         public static AppEnvironmentVariableKey<string> SENTRY_DSN =
             new AppEnvironmentVariableKey<string>(nameof(SENTRY_DSN));
+
+        public static AppEnvironmentVariableKey<string> CAUSEWAYLINK_VTL_URL =
+            new AppEnvironmentVariableKey<string>(nameof(CAUSEWAYLINK_VTL_URL));
     }
 }

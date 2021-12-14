@@ -39,10 +39,16 @@ namespace ExtremelyNaggyBot
                                     InlineKeyboardButton.WithCallbackData("Acknowledge",
                                         JsonSerializer.Serialize(new ReminderAcknowledgement(nagging.ReminderId)))
                                 }));
+                            Console.WriteLine(
+                                FormattableString.Invariant(
+                                    $"Send \"{nagging.Description}\" to user \"{nagging.UserId}\"."));
                             await Services.ExtremelyNaggyBotDB.Execute(
                                 new UpdateNaggingDatetimeQuery(new Nagging(nagging.Id, nagging.ReminderId,
                                     nagging.UserId,
                                     nagging.Description, dateTime.AddMinutes(60))));
+                            Console.WriteLine(
+                                FormattableString.Invariant(
+                                    $"Updated next nagging for \"{nagging.Description}\"."));
                         }
                     }
                 })
