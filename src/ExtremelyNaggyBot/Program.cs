@@ -45,6 +45,7 @@ namespace ExtremelyNaggyBot
             }
 
             string rootPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            Console.WriteLine(FormattableString.Invariant($"Root Path: {rootPath}."));
 
             using (SentrySdk.Init(o =>
                    {
