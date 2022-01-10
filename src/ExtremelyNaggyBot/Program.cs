@@ -44,6 +44,8 @@ namespace ExtremelyNaggyBot
                 Environment.Exit(0);
             }
 
+            string rootPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+
             using (SentrySdk.Init(o =>
                    {
                        o.Dsn = sentryDSN;
@@ -52,6 +54,7 @@ namespace ExtremelyNaggyBot
                        // Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring.
                        // We recommend adjusting this value in production.
                        o.TracesSampleRate = 1.0;
+                       o.CacheDirectoryPath = rootPath;
                    }))
             {
                 // App code goes here. Dispose the SDK before exiting to flush events.
