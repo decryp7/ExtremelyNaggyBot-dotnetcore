@@ -27,7 +27,7 @@ namespace ExtremelyNaggyBot
 
                         foreach (Nagging nagging in naggings)
                         {
-                            if (dateTime != nagging.DateTime)
+                            if (dateTime > nagging.DateTime)
                             {
                                 continue;
                             }
@@ -45,7 +45,7 @@ namespace ExtremelyNaggyBot
                             await Services.ExtremelyNaggyBotDB.Execute(
                                 new UpdateNaggingDatetimeQuery(new Nagging(nagging.Id, nagging.ReminderId,
                                     nagging.UserId,
-                                    nagging.Description, dateTime.AddMinutes(60))));
+                                    nagging.Description, DateTime.Now.AddMinutes(1))));
                             Console.WriteLine(
                                 FormattableString.Invariant(
                                     $"Updated next nagging for \"{nagging.Description}\"."));

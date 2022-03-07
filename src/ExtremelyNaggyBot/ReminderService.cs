@@ -29,7 +29,7 @@ namespace ExtremelyNaggyBot
 
                         foreach (Reminder reminder in reminders)
                         {
-                            if (dateTime != reminder.DateTime)
+                            if (dateTime > reminder.DateTime)
                             {
                                 continue;
                             }
@@ -43,7 +43,7 @@ namespace ExtremelyNaggyBot
                                 }));
                             await Services.ExtremelyNaggyBotDB.Execute(
                                 new AddNaggingQuery(new Nagging(reminder.Id, reminder.UserId, reminder.Description,
-                                    dateTime.AddMinutes(60))));
+                                    DateTime.Now.AddMinutes(1))));
                         }
                     }
                 })
