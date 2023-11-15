@@ -15,7 +15,7 @@
     <PackageReference Include="Sentry" Version="3.6.0" />
     <PackageReference Include="SimpleDatabase" Version="2.0.3" />
     <PackageReference Include="SimpleWorkflow" Version="2.0.0" />
-    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.114.3" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
     <PackageReference Include="System.Reactive" Version="6.0.0" />
     <PackageReference Include="Telegram.Bot" Version="16.0.2" />
   </ItemGroup>
