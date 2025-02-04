@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="GuardLibrary" Version="1.0.0" />
-    <PackageReference Include="PuppeteerSharp" Version="20.0.5" />
+    <PackageReference Include="PuppeteerSharp" Version="20.1.0" />
     <PackageReference Include="Sentry" Version="5.1.0" />
     <PackageReference Include="SimpleDatabase" Version="2.0.3" />
     <PackageReference Include="SimpleWorkflow" Version="2.0.0" />
