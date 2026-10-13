@@ -1,0 +1,7 @@
+target/
+data/
+.git/
+.gitea/
+.env
+*.md
+docker-compose.yml

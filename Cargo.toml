@@ -1,0 +1,28 @@
+[package]
+name = "extremely-naggy-bot"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A Telegram reminder bot that keeps nagging until you acknowledge."
+publish = false
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+regex = "1"
+rusqlite = { version = "0.40", features = ["bundled"] }
+sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry-tracing = "0.49"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+teloxide = { version = "0.17", default-features = false, features = ["macros", "rustls", "throttle"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

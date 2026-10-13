@@ -1,17 +1,26 @@
-FROM mcr.microsoft.com/dotnet/sdk:11.0 as build-env
+# syntax=docker/dockerfile:1
+
+FROM rust:1-alpine AS build
+RUN apk add --no-cache musl-dev
 WORKDIR /src
 
-# Copy csproj and restore as distinct layers
-COPY /src/ExtremelyNaggyBot/*.csproj ./
-RUN dotnet nuget add source https://repository.decryptology.net/repository/Nuget/ -n decryptology.net
-RUN dotnet restore 
+# Build dependencies in their own layer so source changes don't rebuild them.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked \
+    && rm -rf src
 
-# Copy everything else and build
-COPY /src/ExtremelyNaggyBot ./
-RUN dotnet publish -c Release -o out
+COPY migrations ./migrations
+COPY src ./src
+RUN touch src/main.rs && cargo build --release --locked
 
-# Build runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:11.0
+FROM alpine:3
+RUN apk add --no-cache ca-certificates \
+    && adduser -D -H -u 10001 bot \
+    && mkdir -p /app/data \
+    && chown bot:bot /app/data
 WORKDIR /app
-COPY --from=build-env /src/out .
-ENTRYPOINT dotnet ExtremelyNaggyBot.dll
+COPY --from=build /src/target/release/extremely-naggy-bot /usr/local/bin/extremely-naggy-bot
+USER bot
+VOLUME ["/app/data"]
+ENTRYPOINT ["/usr/local/bin/extremely-naggy-bot"]
