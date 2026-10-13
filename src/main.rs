@@ -7,6 +7,7 @@ mod db;
 mod model;
 mod panels;
 mod scheduler;
+mod service;
 mod telegram;
 mod time_input;
 mod web;
@@ -24,6 +25,7 @@ use tracing_subscriber::prelude::*;
 use crate::commands::BotInfo;
 use crate::config::Config;
 use crate::db::Db;
+use crate::service::Service;
 use crate::telegram::AppState;
 
 fn main() -> ExitCode {
@@ -89,9 +91,14 @@ async fn run(config: Config) -> anyhow::Result<()> {
     }
 
     let shutdown = CancellationToken::new();
-    let scheduler = tokio::spawn(scheduler::run(bot.clone(), db.clone(), shutdown.clone()));
+    let scheduler = tokio::spawn(scheduler::run(
+        telegram::TelegramNotifier(bot.clone()),
+        db.clone(),
+        shutdown.clone(),
+    ));
+    let service = Service::new(db);
     let web_state = Arc::new(web::WebState {
-        db: db.clone(),
+        service: service.clone(),
         bot_token: config.telegram_token.clone(),
         web_app_url: config.web_app_url.clone(),
     });
@@ -102,7 +109,7 @@ async fn run(config: Config) -> anyhow::Result<()> {
         .branch(Update::filter_callback_query().endpoint(telegram::handle_callback));
 
     let mut dispatcher = Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![Arc::new(AppState { db, bot_info })])
+        .dependencies(dptree::deps![Arc::new(AppState { service, bot_info })])
         .default_handler(|_| async {})
         .error_handler(LoggingErrorHandler::with_custom_text(
             "error while handling an update",

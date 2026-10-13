@@ -9,9 +9,9 @@ use teloxide::utils::command::BotCommands;
 use url::Url;
 
 use crate::conversation::{self, Markup, Reply, Sender};
-use crate::db::Db;
 use crate::model::Recurrence;
 use crate::panels;
+use crate::service::{self, ReminderInput, Service};
 
 const SOURCE_URL: &str = "https://dev.decryptology.net/decryp7/ExtremelyNaggyBot";
 
@@ -76,11 +76,11 @@ pub async fn execute(
     command: Command,
     sender: &Sender,
     bot: &BotInfo,
-    db: &Db,
+    service: &Service,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Vec<Reply>> {
     let name = &sender.first_name;
-    let user = db.user(sender.chat_id).await?;
+    let user = service.user(sender.chat_id).await?;
 
     Ok(match command {
         Command::Start => match user {
@@ -124,20 +124,19 @@ pub async fn execute(
         )],
         Command::RemindMe(text) => match (&user, legacy_reminder(&text)) {
             (Some(user), Some((description, at, recurrence))) => {
-                let Some(due) = recurrence.first_due(at, user.tz, now) else {
-                    return Ok(vec![Reply::text("That time is already in the past.")]);
-                };
-                let reminder = db
-                    .add_reminder(user.id, description, due, recurrence)
-                    .await?;
-                vec![panels::saved(&reminder, user, now, "✅ Reminder saved").into()]
+                let input = ReminderInput { description: &description, at, recurrence };
+                match service.create(user, input, now).await {
+                    Ok(reminder) => vec![panels::saved(&reminder, user, now, "✅ Reminder saved").into()],
+                    Err(service::Error::Input(error)) => vec![Reply::text(error.to_string())],
+                    Err(error) => return Err(error.into()),
+                }
             }
-            _ => conversation::start_reminder_for(db, sender, &text, now).await?,
+            _ => conversation::start_reminder_for(service, sender, &text, now).await?,
         },
 
         Command::List => match user {
             Some(user) => {
-                let reminders = db.reminders_for_user(user.id).await?;
+                let reminders = service.list(user.id).await?;
                 vec![bot.with_app_button(sender, panels::list(&reminders, &user).into())]
             }
             None => vec![not_registered(sender)],
@@ -151,15 +150,15 @@ pub async fn execute(
             vec![conversation::ask_timezone(sender, &intro)]
         }
         Command::Timezone(arg) => match crate::model::UserTz::parse(&arg) {
-            Ok(tz) => conversation::set_timezone(db, sender, tz, now).await?,
+            Ok(tz) => conversation::set_timezone(service, sender, tz, now).await?,
             Err(error) => vec![conversation::ask_timezone(sender, &error.to_string())],
         },
 
         Command::Calendar => {
-            vec![conversation::calendar_link(db, sender.chat_id, bot.web_app.as_ref(), false).await?.into()]
+            vec![conversation::calendar_link(service, sender.chat_id, bot.web_app.as_ref(), false).await?.into()]
         }
 
-        Command::ClearAll => match db.delete_all_reminders(sender.chat_id).await? {
+        Command::ClearAll => match service.delete_all(sender.chat_id).await? {
             0 => vec![Reply::text("You have no reminders.")],
             1 => vec![Reply::text("I have deleted your reminder.")],
             n => vec![Reply::text(format!(
@@ -167,7 +166,7 @@ pub async fn execute(
             ))],
         },
         Command::Unregister => {
-            let removed = db.delete_user(sender.chat_id).await?;
+            let removed = service.unregister(sender.chat_id).await?;
             vec![Reply::text(if removed {
                 format!("Goodbye {name}, I have deleted you and all your reminders.")
             } else {

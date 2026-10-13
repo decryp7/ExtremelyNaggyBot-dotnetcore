@@ -345,6 +345,14 @@ pub struct Nagging {
     pub next_at: DateTime<Utc>,
 }
 
+/// How long to postpone a nagging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Snooze {
+    TenMinutes,
+    OneHour,
+    TomorrowMorning,
+}
+
 /// Text the user sent that is waiting for a time to be chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Draft {
@@ -363,6 +371,10 @@ pub enum InputError {
     InvalidTimezone,
     #[error("Repeat must be one of: once, daily, weekdays, weekly, monthly, yearly.")]
     InvalidRecurrence,
+    #[error("Please enter what to remind you about.")]
+    EmptyDescription,
+    #[error("That time has already passed.")]
+    InPast,
 }
 
 #[cfg(test)]

@@ -5,7 +5,8 @@ use chrono::{
 };
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
-use crate::callback::{Action, Snooze, Subject};
+use crate::callback::{Action, Subject};
+use crate::model::Snooze;
 use crate::model::{Recurrence, Reminder, User};
 
 pub struct Panel {

@@ -14,15 +14,16 @@ use teloxide::{ApiError, RequestError};
 
 use crate::commands::{self, BotInfo, Command};
 use crate::conversation::{self, Markup, Reply, Sender};
-use crate::db::Db;
 use crate::model::Nagging;
 use crate::panels;
+use crate::scheduler::{Delivery, Notifier};
+use crate::service::Service;
 
 pub type Bot = Throttle<teloxide::Bot>;
 pub type HandlerResult = anyhow::Result<()>;
 
 pub struct AppState {
-    pub db: Db,
+    pub service: Service,
     pub bot_info: BotInfo,
 }
 
@@ -31,15 +32,18 @@ const INTERNAL_ERROR: &str = "Sorry, something went wrong. Please try again late
 pub async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> HandlerResult {
     let sender = sender_of(&msg);
     let now = Utc::now();
-    let db = &state.db;
+    let service = &state.service;
 
     let result = if let Some(location) = msg.location() {
-        conversation::on_location(db, &sender, location.latitude, location.longitude, now).await
+        conversation::on_location(service, &sender, location.latitude, location.longitude, now)
+            .await
     } else if let Some(text) = msg.text().or(msg.caption()) {
         let forwarded = msg.forward_origin().is_some();
         if text.starts_with('/') && !forwarded {
             match Command::parse(text, &state.bot_info.username) {
-                Ok(command) => commands::execute(command, &sender, &state.bot_info, db, now).await,
+                Ok(command) => {
+                    commands::execute(command, &sender, &state.bot_info, service, now).await
+                }
                 // Addressed to another bot in a group chat.
                 Err(ParseError::WrongBotName(_)) => return Ok(()),
                 Err(_) => Ok(vec![Reply::text(
@@ -47,7 +51,7 @@ pub async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Han
                 )]),
             }
         } else if sender.private {
-            conversation::on_text(db, &sender, text, forwarded, now).await
+            conversation::on_text(service, &sender, text, forwarded, now).await
         } else {
             // In groups, only commands are handled.
             return Ok(());
@@ -76,7 +80,7 @@ pub async fn handle_callback(
     let data = query.data.as_deref().unwrap_or_default();
 
     let reply = match conversation::on_callback(
-        &state.db,
+        &state.service,
         user_id,
         data,
         message.and_then(|m| m.text()),
@@ -137,20 +141,24 @@ async fn send(bot: &Bot, chat_id: ChatId, reply: Reply) -> Result<(), RequestErr
     Ok(())
 }
 
-/// Sends a reminder with Done/Snooze buttons. Returns `Ok(false)` if the chat can no longer
-/// be reached (bot blocked, chat deleted, ...), so the caller can stop nagging it.
-pub async fn send_nagging(bot: &Bot, nagging: &Nagging) -> Result<bool, RequestError> {
-    match bot
-        .send_message(
-            ChatId(nagging.user_id),
-            format!("⏰ {}", nagging.description),
-        )
-        .reply_markup(panels::nag_keyboard(nagging.id))
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(RequestError::Api(error)) if is_unreachable(&error) => Ok(false),
-        Err(error) => Err(error),
+/// Sends reminders as Telegram messages with Done/Snooze buttons.
+pub struct TelegramNotifier(pub Bot);
+
+impl Notifier for TelegramNotifier {
+    async fn send(&self, nagging: &Nagging) -> Delivery {
+        let result = self
+            .0
+            .send_message(
+                ChatId(nagging.user_id),
+                format!("⏰ {}", nagging.description),
+            )
+            .reply_markup(panels::nag_keyboard(nagging.id))
+            .await;
+        match result {
+            Ok(_) => Delivery::Sent,
+            Err(RequestError::Api(error)) if is_unreachable(&error) => Delivery::Unreachable,
+            Err(error) => Delivery::Failed(error.to_string()),
+        }
     }
 }
 

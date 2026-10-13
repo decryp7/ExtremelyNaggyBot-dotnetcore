@@ -1,17 +1,17 @@
 //! The reminder flow: what to do with text, locations and button presses.
 //!
-//! Handlers return replies instead of calling Telegram, so the flow can be tested against an
-//! in-memory database.
+//! Handlers return replies instead of calling Telegram; the rules themselves live in
+//! [`Service`]. This module only decides what to show.
 
-use chrono::{DateTime, Duration, NaiveTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 use url::Url;
 
 use crate::calendar;
-use crate::callback::{Action, Snooze, Subject};
-use crate::db::Db;
-use crate::model::{User, UserTz};
+use crate::callback::{Action, Subject};
+use crate::model::{InputError, User, UserTz};
 use crate::panels::{self, Panel};
+use crate::service::{self, Profile, Service};
 use crate::time_input;
 
 /// A typed time is applied to the user's draft only if the draft is this recent.
@@ -20,8 +20,6 @@ const TYPED_TIME_WINDOW: Duration = Duration::minutes(30);
 const TIMEZONE_WINDOW: Duration = Duration::hours(24);
 /// Short unrecognised text from an unregistered user is treated as a failed timezone answer.
 const MAX_TIMEZONE_ANSWER_CHARS: usize = 30;
-const MAX_DESCRIPTION_CHARS: usize = 1000;
-const SNOOZE_MORNING: NaiveTime = NaiveTime::from_hms_opt(9, 0, 0).expect("valid time");
 
 /// The chat a message came from. `chat_id` identifies the user in the database (in private
 /// chats it equals the Telegram user id).
@@ -30,6 +28,16 @@ pub struct Sender {
     pub first_name: String,
     pub last_name: String,
     pub private: bool,
+}
+
+impl Sender {
+    fn profile(&self) -> Profile {
+        Profile {
+            id: self.chat_id,
+            first_name: self.first_name.clone(),
+            last_name: self.last_name.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +109,7 @@ impl CallbackReply {
 
 /// Plain text or a forwarded message.
 pub async fn on_text(
-    db: &Db,
+    service: &Service,
     sender: &Sender,
     text: &str,
     forwarded: bool,
@@ -112,23 +120,22 @@ pub async fn on_text(
         return Ok(Vec::new());
     }
 
-    let Some(user) = db.user(sender.chat_id).await? else {
+    let Some(user) = service.user(sender.chat_id).await? else {
         // Not registered: this is either the answer to "which timezone?" or a new reminder.
-        if !forwarded
-            && db
-                .pending_draft(sender.chat_id, now - TIMEZONE_WINDOW)
-                .await?
-                .is_some()
-        {
+        let awaiting_timezone = service
+            .pending_draft(sender.chat_id, TIMEZONE_WINDOW, now)
+            .await?
+            .is_some();
+        if !forwarded && awaiting_timezone {
             match UserTz::parse(text) {
-                Ok(tz) => return set_timezone(db, sender, tz, now).await,
+                Ok(tz) => return set_timezone(service, sender, tz, now).await,
                 Err(error) if text.chars().count() <= MAX_TIMEZONE_ANSWER_CHARS => {
                     return Ok(vec![ask_timezone(sender, &error.to_string())]);
                 }
                 Err(_) => {}
             }
         }
-        let draft = db.create_draft(sender.chat_id, clamp(text), now).await?;
+        let draft = service.start_draft(sender.chat_id, text, now).await?;
         return Ok(vec![ask_timezone(
             sender,
             &format!("📝 {}\n\nFirst, which timezone are you in?", draft.text),
@@ -136,24 +143,26 @@ pub async fn on_text(
     };
 
     if !forwarded
-        && let Some(draft) = db.pending_draft(user.id, now - TYPED_TIME_WINDOW).await?
+        && let Some(draft) = service
+            .pending_draft(user.id, TYPED_TIME_WINDOW, now)
+            .await?
         && let Some(at) = time_input::parse(text, user.tz, now)
     {
         return Ok(vec![
             panels::repeat(Subject::Draft(draft.id), &draft.text, at).into(),
         ]);
     }
-    start_reminder(db, &user, text, now).await
+    start_reminder(service, &user, text, now).await
 }
 
 /// Starts the "when?" flow for `text`.
 pub async fn start_reminder(
-    db: &Db,
+    service: &Service,
     user: &User,
     text: &str,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Vec<Reply>> {
-    let draft = db.create_draft(user.id, clamp(text), now).await?;
+    let draft = service.start_draft(user.id, text, now).await?;
     Ok(vec![
         panels::when(Subject::Draft(draft.id), &draft.text, user.tz.local(now)).into(),
     ])
@@ -161,19 +170,19 @@ pub async fn start_reminder(
 
 /// Starts a reminder for a sender who may not be registered yet (used by `/remindme`).
 pub async fn start_reminder_for(
-    db: &Db,
+    service: &Service,
     sender: &Sender,
     text: &str,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Vec<Reply>> {
-    match db.user(sender.chat_id).await? {
-        Some(user) => start_reminder(db, &user, text, now).await,
-        None => on_text(db, sender, text, true, now).await,
+    match service.user(sender.chat_id).await? {
+        Some(user) => start_reminder(service, &user, text, now).await,
+        None => on_text(service, sender, text, true, now).await,
     }
 }
 
 pub async fn on_location(
-    db: &Db,
+    service: &Service,
     sender: &Sender,
     latitude: f64,
     longitude: f64,
@@ -182,7 +191,7 @@ pub async fn on_location(
     let tz =
         tokio::task::spawn_blocking(move || UserTz::from_location(latitude, longitude)).await?;
     match tz {
-        Some(tz) => set_timezone(db, sender, tz, now).await,
+        Some(tz) => set_timezone(service, sender, tz, now).await,
         None => Ok(vec![ask_timezone(
             sender,
             "I couldn't work out the timezone for that location.",
@@ -192,25 +201,19 @@ pub async fn on_location(
 
 /// Registers the sender (or updates their timezone) and resumes any pending reminder.
 pub async fn set_timezone(
-    db: &Db,
+    service: &Service,
     sender: &Sender,
     tz: UserTz,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Vec<Reply>> {
-    let user = User {
-        id: sender.chat_id,
-        first_name: sender.first_name.clone(),
-        last_name: sender.last_name.clone(),
-        tz,
-    };
-    db.upsert_user(user).await?;
+    service.set_timezone(sender.profile(), tz).await?;
 
     let mut replies = vec![Reply {
         text: format!("🌍 Timezone set to {tz}."),
         markup: Markup::RemoveKeyboard,
     }];
-    match db
-        .pending_draft(sender.chat_id, now - TIMEZONE_WINDOW)
+    match service
+        .pending_draft(sender.chat_id, TIMEZONE_WINDOW, now)
         .await?
     {
         Some(draft) => {
@@ -238,7 +241,7 @@ pub fn ask_timezone(sender: &Sender, intro: &str) -> Reply {
 
 /// The user's calendar feed link with instructions, or an explanation why there is none.
 pub async fn calendar_link(
-    db: &Db,
+    service: &Service,
     user_id: i64,
     web_app: Option<&Url>,
     reset: bool,
@@ -252,8 +255,12 @@ pub async fn calendar_link(
             "The calendar feed is not enabled on this bot (WEB_APP_URL is not set).",
         ));
     };
-    let Some(token) = db.calendar_token(user_id, reset).await? else {
-        return Ok(text("Set your timezone first: send /start."));
+    let token = match service.calendar_token(user_id, reset).await {
+        Ok(token) => token,
+        Err(service::Error::NotRegistered) => {
+            return Ok(text("Set your timezone first: send /start."));
+        }
+        Err(error) => return Err(error.into()),
     };
     let Some(url) = calendar::feed_url(base, &token) else {
         return Ok(text("The calendar feed address is misconfigured."));
@@ -268,7 +275,7 @@ pub async fn calendar_link(
 }
 
 pub async fn on_callback(
-    db: &Db,
+    service: &Service,
     user_id: i64,
     data: &str,
     message_text: Option<&str>,
@@ -278,142 +285,145 @@ pub async fn on_callback(
     let Some(action) = Action::parse(data) else {
         return Ok(CallbackReply::toast("This button is no longer valid."));
     };
+    match handle_action(service, user_id, action, message_text, web_app, now).await {
+        Ok(reply) => Ok(reply),
+        Err(service::Error::NotFound) => Ok(CallbackReply::finish(
+            message_text.unwrap_or("This reminder is no longer available."),
+            Some("This reminder is no longer available."),
+        )),
+        Err(service::Error::NotRegistered) => Ok(CallbackReply::toast(
+            "Please set your timezone first: send /start.",
+        )),
+        Err(service::Error::Input(error)) => Ok(CallbackReply::toast(error.to_string())),
+        Err(service::Error::Internal(error)) => Err(error),
+    }
+}
 
-    // Buttons on reminder messages.
+async fn handle_action(
+    service: &Service,
+    user_id: i64,
+    action: Action,
+    message_text: Option<&str>,
+    web_app: Option<&Url>,
+    now: DateTime<Utc>,
+) -> service::Result<CallbackReply> {
+    // Buttons on reminder messages ("⏰ <description>").
     let nag_text = message_text.map_or("", |t| t.trim_start_matches("⏰").trim_start());
+    let already_done =
+        || CallbackReply::finish(message_text.unwrap_or_default(), Some("Already done"));
+
     match action {
         Action::Noop => return Ok(CallbackReply::default()),
         Action::CalendarReset => {
             return Ok(CallbackReply {
                 toast: Some("New link created. The old one no longer works.".into()),
-                edit: Some(calendar_link(db, user_id, web_app, true).await?),
+                edit: Some(calendar_link(service, user_id, web_app, true).await?),
             });
         }
         Action::Done(id) | Action::LegacyNaggingAck(id) => {
-            return Ok(if db.acknowledge_nagging(user_id, id).await? {
+            return Ok(if service.done(user_id, id).await? {
                 CallbackReply::finish(format!("✅ {nag_text}"), Some("Done ✅"))
             } else {
-                CallbackReply::finish(message_text.unwrap_or_default(), Some("Already done"))
+                already_done()
             });
         }
         Action::LegacyReminderAck(id) => {
-            return Ok(if db.acknowledge_reminder(user_id, id).await? {
+            return Ok(if service.done_legacy(user_id, id).await? {
                 CallbackReply::finish(format!("✅ {nag_text}"), Some("Done ✅"))
             } else {
-                CallbackReply::finish(message_text.unwrap_or_default(), Some("Already done"))
+                already_done()
             });
         }
         _ => {}
     }
 
-    let Some(user) = db.user(user_id).await? else {
-        return Ok(CallbackReply::toast(
-            "Please set your timezone first: send /start.",
-        ));
-    };
+    let user = service.registered(user_id).await?;
     let now_local = user.tz.local(now);
 
     Ok(match action {
-        Action::Snooze(id, snooze) => {
-            let until = match snooze {
-                Snooze::TenMinutes => now + Duration::minutes(10),
-                Snooze::OneHour => now + Duration::hours(1),
-                Snooze::TomorrowMorning => user
-                    .tz
-                    .utc((now_local.date() + Duration::days(1)).and_time(SNOOZE_MORNING)),
-            };
-            if db.snooze_nagging(user_id, id, until).await? {
-                CallbackReply::finish(
-                    format!(
-                        "💤 {nag_text}\nSnoozed until {}",
-                        panels::format_when(user.tz.local(until))
-                    ),
-                    Some("Snoozed 💤"),
-                )
-            } else {
-                CallbackReply::finish(message_text.unwrap_or_default(), Some("Already done"))
-            }
-        }
-
-        Action::When(subject) => match subject_text(db, user_id, subject).await? {
-            Some(text) => CallbackReply::edit(panels::when(subject, &text, now_local)),
-            None => gone(message_text),
+        Action::Snooze(id, snooze) => match service.snooze(&user, id, snooze, now).await? {
+            Some(until) => CallbackReply::finish(
+                format!(
+                    "💤 {nag_text}\nSnoozed until {}",
+                    panels::format_when(user.tz.local(until))
+                ),
+                Some("Snoozed 💤"),
+            ),
+            None => already_done(),
         },
-        Action::Calendar(subject, year, month) => match subject_text(db, user_id, subject).await? {
-            Some(text) => CallbackReply::edit(panels::calendar(
+
+        Action::When(subject) => {
+            let text = subject_text(service, user_id, subject).await?;
+            CallbackReply::edit(panels::when(subject, &text, now_local))
+        }
+        Action::Calendar(subject, year, month) => {
+            let text = subject_text(service, user_id, subject).await?;
+            CallbackReply::edit(panels::calendar(
                 subject,
                 &text,
                 year,
                 month,
                 now_local.date(),
-            )),
-            None => gone(message_text),
-        },
-        Action::Day(subject, date) => match subject_text(db, user_id, subject).await? {
-            Some(text) => CallbackReply::edit(panels::hours(subject, &text, date, now_local)),
-            None => gone(message_text),
-        },
-        Action::Hour(subject, date, hour) => match subject_text(db, user_id, subject).await? {
-            Some(text) => {
-                CallbackReply::edit(panels::minutes(subject, &text, date, hour, now_local))
-            }
-            None => gone(message_text),
-        },
-        Action::At(subject, at) => match subject_text(db, user_id, subject).await? {
-            Some(text) => CallbackReply::edit(panels::repeat(subject, &text, at)),
-            None => gone(message_text),
-        },
+            ))
+        }
+        Action::Day(subject, date) => {
+            let text = subject_text(service, user_id, subject).await?;
+            CallbackReply::edit(panels::hours(subject, &text, date, now_local))
+        }
+        Action::Hour(subject, date, hour) => {
+            let text = subject_text(service, user_id, subject).await?;
+            CallbackReply::edit(panels::minutes(subject, &text, date, hour, now_local))
+        }
+        Action::At(subject, at) => {
+            let text = subject_text(service, user_id, subject).await?;
+            CallbackReply::edit(panels::repeat(subject, &text, at))
+        }
 
         Action::Save(subject, at, recurrence) => {
-            let Some(due) = recurrence.first_due(at, user.tz, now) else {
-                let Some(text) = subject_text(db, user_id, subject).await? else {
-                    return Ok(gone(message_text));
-                };
-                return Ok(CallbackReply {
-                    toast: Some("That time has already passed. Pick another.".into()),
-                    edit: Some(panels::when(subject, &text, now_local)),
-                });
-            };
-            let (saved, heading) = match subject {
-                Subject::Draft(id) => (
-                    db.save_draft(user_id, id, due, recurrence).await?,
-                    "✅ Reminder saved",
-                ),
-                Subject::Reminder(id) => (
-                    db.update_reminder(user_id, id, None, due, recurrence)
-                        .await?,
-                    "✅ Reminder updated",
-                ),
+            let saved = match subject {
+                Subject::Draft(id) => service
+                    .save_draft(&user, id, at, recurrence, now)
+                    .await
+                    .map(|r| (r, "✅ Reminder saved")),
+                Subject::Reminder(id) => service
+                    .update(&user, id, None, at, recurrence, now)
+                    .await
+                    .map(|r| (r, "✅ Reminder updated")),
             };
             match saved {
-                Some(reminder) => CallbackReply {
+                Ok((reminder, heading)) => CallbackReply {
                     toast: Some("Saved ✅".into()),
                     edit: Some(panels::saved(&reminder, &user, now, heading)),
                 },
-                None => gone(message_text),
+                // The picked time passed while the user was choosing: ask again.
+                Err(service::Error::Input(InputError::InPast)) => {
+                    let text = subject_text(service, user_id, subject).await?;
+                    CallbackReply {
+                        toast: Some("That time has already passed. Pick another.".into()),
+                        edit: Some(panels::when(subject, &text, now_local)),
+                    }
+                }
+                Err(error) => return Err(error),
             }
         }
 
         Action::CancelDraft(id) => {
-            db.delete_draft(user_id, id).await?;
+            service.cancel_draft(user_id, id).await?;
             CallbackReply::finish("✖ Cancelled.", None)
         }
-        Action::Manage(id) => match db.reminder(user_id, id).await? {
-            Some(reminder) => CallbackReply::edit(panels::manage(&reminder, &user, now)),
-            None => gone(message_text),
-        },
-        Action::Delete(id) => match db.reminder(user_id, id).await? {
-            Some(reminder) => {
-                db.delete_reminder(user_id, id).await?;
-                CallbackReply::finish(
-                    format!("🗑 Removed: {}", reminder.description),
-                    Some("Removed"),
-                )
-            }
-            None => gone(message_text),
-        },
+        Action::Manage(id) => {
+            let reminder = service.reminder(user_id, id).await?;
+            CallbackReply::edit(panels::manage(&reminder, &user, now))
+        }
+        Action::Delete(id) => {
+            let reminder = service.delete(user_id, id).await?;
+            CallbackReply::finish(
+                format!("🗑 Removed: {}", reminder.description),
+                Some("Removed"),
+            )
+        }
         Action::List => {
-            let reminders = db.reminders_for_user(user_id).await?;
+            let reminders = service.list(user_id).await?;
             CallbackReply::edit(panels::list(&reminders, &user))
         }
 
@@ -421,35 +431,27 @@ pub async fn on_callback(
         | Action::CalendarReset
         | Action::Done(_)
         | Action::LegacyNaggingAck(_)
-        | Action::LegacyReminderAck(_) => {
-            unreachable!("handled above")
-        }
+        | Action::LegacyReminderAck(_) => unreachable!("handled above"),
     })
 }
 
-async fn subject_text(db: &Db, user_id: i64, subject: Subject) -> anyhow::Result<Option<String>> {
+async fn subject_text(
+    service: &Service,
+    user_id: i64,
+    subject: Subject,
+) -> service::Result<String> {
     Ok(match subject {
-        Subject::Draft(id) => db.draft(user_id, id).await?.map(|d| d.text),
-        Subject::Reminder(id) => db.reminder(user_id, id).await?.map(|r| r.description),
+        Subject::Draft(id) => service.draft(user_id, id).await?.text,
+        Subject::Reminder(id) => service.reminder(user_id, id).await?.description,
     })
-}
-
-/// The draft or reminder behind a button no longer exists (saved, cancelled or deleted).
-fn gone(message_text: Option<&str>) -> CallbackReply {
-    CallbackReply::finish(
-        message_text.unwrap_or("This reminder is no longer available."),
-        Some("This reminder is no longer available."),
-    )
-}
-
-fn clamp(text: &str) -> String {
-    text.chars().take(MAX_DESCRIPTION_CHARS).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Db;
     use crate::model::Recurrence;
+    use crate::model::Snooze;
     use chrono::{NaiveDate, NaiveDateTime};
     use chrono_tz::Tz;
     use teloxide::types::InlineKeyboardButtonKind;
@@ -501,7 +503,7 @@ mod tests {
             .1
     }
 
-    async fn press(db: &Db, action: Action) -> CallbackReply {
+    async fn press(db: &Service, action: Action) -> CallbackReply {
         on_callback(db, 7, &action.encode(), Some("message"), None, now())
             .await
             .unwrap()
@@ -513,7 +515,8 @@ mod tests {
 
     #[tokio::test]
     async fn new_user_is_asked_for_timezone_then_continues() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         let replies = on_text(&db, &sender(), "call mum", false, now())
             .await
             .unwrap();
@@ -540,7 +543,8 @@ mod tests {
 
     #[tokio::test]
     async fn quick_choice_flow_saves_in_two_taps() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
 
         let replies = on_text(&db, &sender(), "call mum", false, now())
@@ -561,7 +565,7 @@ mod tests {
                 .starts_with("✅ Reminder saved")
         );
 
-        let reminders = db.reminders_for_user(7).await.unwrap();
+        let reminders = store.reminders_for_user(7).await.unwrap();
         assert_eq!(reminders.len(), 1);
         assert_eq!(reminders[0].description, "call mum");
         assert_eq!(reminders[0].recurrence, Recurrence::Daily);
@@ -569,12 +573,13 @@ mod tests {
 
         // Pressing the same button again does not create a duplicate.
         press(&db, daily).await;
-        assert_eq!(db.reminders_for_user(7).await.unwrap().len(), 1);
+        assert_eq!(store.reminders_for_user(7).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn calendar_flow_picks_date_hour_and_minute() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
         let replies = on_text(&db, &sender(), "dentist", false, now())
             .await
@@ -587,14 +592,15 @@ mod tests {
         let repeat = press(&db, find(&edit_markup(&minutes), "14:45")).await;
         press(&db, find(&edit_markup(&repeat), "Once")).await;
 
-        let reminders = db.reminders_for_user(7).await.unwrap();
+        let reminders = store.reminders_for_user(7).await.unwrap();
         assert_eq!(SGT.local(reminders[0].due_at), local(2026, 11, 2, 14, 45));
         assert_eq!(reminders[0].recurrence, Recurrence::Once);
     }
 
     #[tokio::test]
     async fn typed_time_answers_the_when_question() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
         on_text(&db, &sender(), "pay rent", false, now())
             .await
@@ -610,28 +616,30 @@ mod tests {
         );
         press(&db, find(&replies[0].markup, "Monthly · 16")).await;
 
-        let reminders = db.reminders_for_user(7).await.unwrap();
+        let reminders = store.reminders_for_user(7).await.unwrap();
         assert_eq!(reminders[0].description, "pay rent");
         assert_eq!(reminders[0].recurrence, Recurrence::Monthly);
     }
 
     #[tokio::test]
     async fn edit_and_delete_from_the_list() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
         let replies = on_text(&db, &sender(), "stretch", false, now())
             .await
             .unwrap();
         let repeat = press(&db, find(&replies[0].markup, "1 hour")).await;
         press(&db, find(&edit_markup(&repeat), "Weekdays")).await;
-        let reminder = db.reminders_for_user(7).await.unwrap().remove(0);
+        let reminder = store.reminders_for_user(7).await.unwrap().remove(0);
 
         let list = press(&db, Action::List).await;
         let manage = press(&db, find(&edit_markup(&list), "1. stretch")).await;
         let repeat = press(&db, find(&edit_markup(&manage), "🔁 Change repeat")).await;
         press(&db, find(&edit_markup(&repeat), "Every Tue")).await;
         assert_eq!(
-            db.reminder(7, reminder.id)
+            store
+                .reminder(7, reminder.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -641,12 +649,13 @@ mod tests {
 
         let deleted = press(&db, Action::Delete(reminder.id)).await;
         assert!(deleted.edit.unwrap().text.contains("Removed: stretch"));
-        assert!(db.reminders_for_user(7).await.unwrap().is_empty());
+        assert!(store.reminders_for_user(7).await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn cancel_discards_the_draft() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
         let replies = on_text(&db, &sender(), "nothing", false, now())
             .await
@@ -662,13 +671,14 @@ mod tests {
 
     #[tokio::test]
     async fn snooze_and_done_on_a_nag() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
-        let reminder = db
+        let reminder = store
             .add_reminder(7, "pills".into(), now(), Recurrence::Once)
             .await
             .unwrap();
-        let nagging = db
+        let nagging = store
             .fire_reminder(reminder.id, now(), now())
             .await
             .unwrap()
@@ -691,7 +701,7 @@ mod tests {
                 .text
                 .contains("Snoozed until Wed 14 Oct 2026, 09:00")
         );
-        assert!(db.due_naggings(now()).await.unwrap().is_empty());
+        assert!(store.due_naggings(now()).await.unwrap().is_empty());
 
         let reply = on_callback(
             &db,
@@ -705,7 +715,8 @@ mod tests {
         .unwrap();
         assert_eq!(reply.edit.unwrap().text, "✅ pills");
         assert!(
-            db.due_naggings(now() + Duration::days(2))
+            store
+                .due_naggings(now() + Duration::days(2))
                 .await
                 .unwrap()
                 .is_empty()
@@ -714,7 +725,8 @@ mod tests {
 
     #[tokio::test]
     async fn other_users_cannot_press_your_buttons() {
-        let db = Db::open_in_memory().unwrap();
+        let store = Db::open_in_memory().unwrap();
+        let db = Service::new(store.clone());
         set_timezone(&db, &sender(), SGT, now()).await.unwrap();
         let mut other = sender();
         other.chat_id = 8;

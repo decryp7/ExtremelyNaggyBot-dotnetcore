@@ -22,20 +22,19 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::calendar;
-use crate::db::Db;
-use crate::model::{Recurrence, Reminder, User, UserTz};
+use crate::model::{Recurrence, Reminder, UserTz};
 use crate::panels;
+use crate::service::{self, Profile, ReminderInput, Service};
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
 /// `initData` older than this is rejected, limiting how long a leaked copy is useful.
 const MAX_INIT_DATA_AGE_SECS: i64 = 24 * 60 * 60;
-const MAX_DESCRIPTION_CHARS: usize = 1000;
 const LOCAL_FORMAT: &str = "%Y-%m-%dT%H:%M";
 
 type HmacSha256 = hmac::Hmac<Sha256>;
 
 pub struct WebState {
-    pub db: Db,
+    pub service: Service,
     pub bot_token: String,
     /// Public address; calendar feed links are built from it.
     pub web_app_url: Option<Url>,
@@ -127,7 +126,7 @@ struct TimezoneInput {
 }
 
 #[derive(Deserialize)]
-struct ReminderInput {
+struct ReminderBody {
     description: String,
     at: String,
     recurrence: String,
@@ -139,7 +138,7 @@ async fn get_state(
     State(state): State<Arc<WebState>>,
     auth: AuthUser,
 ) -> Result<Json<StateView>, ApiError> {
-    Ok(Json(load_state(&state.db, auth.id, Utc::now()).await?))
+    Ok(Json(load_state(&state.service, auth.id, Utc::now()).await?))
 }
 
 async fn set_timezone(
@@ -147,31 +146,30 @@ async fn set_timezone(
     auth: AuthUser,
     Json(input): Json<TimezoneInput>,
 ) -> Result<Json<StateView>, ApiError> {
-    let tz = UserTz::parse(&input.timezone).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    state
-        .db
-        .upsert_user(User {
-            id: auth.id,
-            first_name: auth.first_name,
-            last_name: auth.last_name,
-            tz,
-        })
-        .await?;
-    Ok(Json(load_state(&state.db, auth.id, Utc::now()).await?))
+    let tz = UserTz::parse(&input.timezone).map_err(service::Error::from)?;
+    let profile = Profile {
+        id: auth.id,
+        first_name: auth.first_name,
+        last_name: auth.last_name,
+    };
+    state.service.set_timezone(profile, tz).await?;
+    Ok(Json(load_state(&state.service, auth.id, Utc::now()).await?))
 }
 
 async fn create_reminder(
     State(state): State<Arc<WebState>>,
     auth: AuthUser,
-    Json(input): Json<ReminderInput>,
+    Json(input): Json<ReminderBody>,
 ) -> Result<(StatusCode, Json<ReminderView>), ApiError> {
     let now = Utc::now();
-    let user = registered(&state.db, auth.id).await?;
-    let (description, due_at, recurrence) = validate(input, user.tz, now)?;
-    let reminder = state
-        .db
-        .add_reminder(user.id, description, due_at, recurrence)
-        .await?;
+    let user = state.service.registered(auth.id).await?;
+    let (at, recurrence) = input.schedule()?;
+    let input = ReminderInput {
+        description: &input.description,
+        at,
+        recurrence,
+    };
+    let reminder = state.service.create(&user, input, now).await?;
     Ok((
         StatusCode::CREATED,
         Json(ReminderView::new(&reminder, user.tz, now)),
@@ -182,16 +180,15 @@ async fn update_reminder(
     State(state): State<Arc<WebState>>,
     auth: AuthUser,
     Path(id): Path<i64>,
-    Json(input): Json<ReminderInput>,
+    Json(input): Json<ReminderBody>,
 ) -> Result<Json<ReminderView>, ApiError> {
     let now = Utc::now();
-    let user = registered(&state.db, auth.id).await?;
-    let (description, due_at, recurrence) = validate(input, user.tz, now)?;
+    let user = state.service.registered(auth.id).await?;
+    let (at, recurrence) = input.schedule()?;
     let reminder = state
-        .db
-        .update_reminder(user.id, id, Some(description), due_at, recurrence)
-        .await?
-        .ok_or(ApiError::NotFound)?;
+        .service
+        .update(&user, id, Some(&input.description), at, recurrence, now)
+        .await?;
     Ok(Json(ReminderView::new(&reminder, user.tz, now)))
 }
 
@@ -200,11 +197,8 @@ async fn delete_reminder(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    if state.db.delete_reminder(auth.id, id).await? {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::NotFound)
-    }
+    state.service.delete(auth.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]
@@ -236,11 +230,7 @@ async fn calendar_link(
         .web_app_url
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("The calendar feed is not enabled.".into()))?;
-    let token = state
-        .db
-        .calendar_token(user_id, reset)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("Set your timezone first.".into()))?;
+    let token = state.service.calendar_token(user_id, reset).await?;
     let url =
         calendar::feed_url(base, &token).ok_or_else(|| anyhow::anyhow!("invalid WEB_APP_URL"))?;
     Ok(CalendarLink {
@@ -259,12 +249,11 @@ async fn calendar_feed(
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(ApiError::NotFound);
     }
-    let user = state
-        .db
-        .user_by_calendar_token(token.to_owned())
+    let (user, reminders) = state
+        .service
+        .calendar_feed(token)
         .await?
         .ok_or(ApiError::NotFound)?;
-    let reminders = state.db.reminders_for_user(user.id).await?;
     let body = calendar::feed(&reminders, user.tz, Utc::now());
     Ok((
         [
@@ -280,8 +269,12 @@ async fn calendar_feed(
         .into_response())
 }
 
-async fn load_state(db: &Db, user_id: i64, now: DateTime<Utc>) -> anyhow::Result<StateView> {
-    let Some(user) = db.user(user_id).await? else {
+async fn load_state(
+    service: &Service,
+    user_id: i64,
+    now: DateTime<Utc>,
+) -> service::Result<StateView> {
+    let Some(user) = service.user(user_id).await? else {
         return Ok(StateView {
             timezone: None,
             timezone_id: None,
@@ -289,7 +282,7 @@ async fn load_state(db: &Db, user_id: i64, now: DateTime<Utc>) -> anyhow::Result
             reminders: Vec::new(),
         });
     };
-    let reminders = db.reminders_for_user(user_id).await?;
+    let reminders = service.list(user_id).await?;
     let timezone_id = match user.tz {
         UserTz::Named(tz) => tz.name().to_owned(),
         UserTz::Fixed(offset) => offset.to_string(),
@@ -305,33 +298,14 @@ async fn load_state(db: &Db, user_id: i64, now: DateTime<Utc>) -> anyhow::Result
     })
 }
 
-async fn registered(db: &Db, user_id: i64) -> Result<User, ApiError> {
-    db.user(user_id)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("Set your timezone first.".into()))
-}
-
-fn validate(
-    input: ReminderInput,
-    tz: UserTz,
-    now: DateTime<Utc>,
-) -> Result<(String, DateTime<Utc>, Recurrence), ApiError> {
-    let bad = |message: &str| ApiError::BadRequest(message.to_owned());
-    let description = input.description.trim();
-    if description.is_empty() {
-        return Err(bad("Please enter what to remind you about."));
+impl ReminderBody {
+    /// Parses the wire format; everything else is validated by the service.
+    fn schedule(&self) -> Result<(NaiveDateTime, Recurrence), ApiError> {
+        let at = NaiveDateTime::parse_from_str(&self.at, LOCAL_FORMAT)
+            .map_err(|_| ApiError::BadRequest("Please pick a date and time.".into()))?;
+        let recurrence = self.recurrence.parse().map_err(service::Error::from)?;
+        Ok((at, recurrence))
     }
-    let description: String = description.chars().take(MAX_DESCRIPTION_CHARS).collect();
-    let at = NaiveDateTime::parse_from_str(&input.at, LOCAL_FORMAT)
-        .map_err(|_| bad("Please pick a date and time."))?;
-    let recurrence: Recurrence = input
-        .recurrence
-        .parse()
-        .map_err(|_| bad("Unknown repeat option."))?;
-    let due_at = recurrence
-        .first_due(at, tz, now)
-        .ok_or_else(|| bad("That time has already passed."))?;
-    Ok((description, due_at, recurrence))
 }
 
 // ---- errors ---------------------------------------------------------------------------
@@ -346,6 +320,18 @@ pub enum ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(error: anyhow::Error) -> Self {
         ApiError::Internal(error)
+    }
+}
+
+impl From<service::Error> for ApiError {
+    fn from(error: service::Error) -> Self {
+        match error {
+            service::Error::NotFound => ApiError::NotFound,
+            service::Error::NotRegistered | service::Error::Input(_) => {
+                ApiError::BadRequest(error.to_string())
+            }
+            service::Error::Internal(error) => ApiError::Internal(error),
+        }
     }
 }
 
@@ -456,6 +442,7 @@ pub fn verify_init_data(init_data: &str, bot_token: &str, now: DateTime<Utc>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Db;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
@@ -558,9 +545,8 @@ mod tests {
 
     #[tokio::test]
     async fn api_flow() {
-        let db = Db::open_in_memory().unwrap();
         let app = router(Arc::new(WebState {
-            db,
+            service: Service::new(Db::open_in_memory().unwrap()),
             bot_token: TOKEN.into(),
             web_app_url: Some(Url::parse("https://reminders.example.com").unwrap()),
         }));
@@ -651,9 +637,8 @@ mod tests {
 
     #[tokio::test]
     async fn serves_page_and_health() {
-        let db = Db::open_in_memory().unwrap();
         let app = router(Arc::new(WebState {
-            db,
+            service: Service::new(Db::open_in_memory().unwrap()),
             bot_token: TOKEN.into(),
             web_app_url: Some(Url::parse("https://reminders.example.com").unwrap()),
         }));
@@ -668,9 +653,8 @@ mod tests {
 
     #[tokio::test]
     async fn calendar_feed_flow() {
-        let db = Db::open_in_memory().unwrap();
         let app = router(Arc::new(WebState {
-            db,
+            service: Service::new(Db::open_in_memory().unwrap()),
             bot_token: TOKEN.into(),
             web_app_url: Some(Url::parse("https://reminders.example.com").unwrap()),
         }));

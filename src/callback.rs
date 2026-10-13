@@ -6,20 +6,13 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use serde::Deserialize;
 
-use crate::model::Recurrence;
+use crate::model::{Recurrence, Snooze};
 
 /// What a time picker is for: a new reminder (draft) or an existing reminder being edited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subject {
     Draft(i64),
     Reminder(i64),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Snooze {
-    TenMinutes,
-    OneHour,
-    TomorrowMorning,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

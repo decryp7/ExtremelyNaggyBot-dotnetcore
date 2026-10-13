@@ -1,5 +1,9 @@
 //! Background loop that fires due reminders, repeats naggings and maintains the database.
+//!
+//! Messages go out through a [`Notifier`], so the scheduling logic can be tested without
+//! Telegram.
 
+use std::future::Future;
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, SubsecRound, Utc};
@@ -8,20 +12,34 @@ use tokio_util::sync::CancellationToken;
 
 use crate::db::Db;
 use crate::model::Nagging;
-use crate::telegram::{self, Bot};
 
 /// How often the database is polled for due reminders and naggings.
 const TICK_INTERVAL: StdDuration = StdDuration::from_secs(10);
 /// How long to wait before nagging again about an unacknowledged reminder.
-const NAG_INTERVAL: Duration = Duration::minutes(1);
-const VACUUM_INTERVAL: StdDuration = StdDuration::from_secs(24 * 60 * 60);
+pub const NAG_INTERVAL: Duration = Duration::minutes(1);
+const MAINTENANCE_INTERVAL: StdDuration = StdDuration::from_secs(24 * 60 * 60);
 /// Drafts (reminders started but never given a time) are discarded after this long.
 const DRAFT_LIFETIME: Duration = Duration::days(1);
 
-pub async fn run(bot: Bot, db: Db, shutdown: CancellationToken) {
+/// Outcome of sending one reminder message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivery {
+    Sent,
+    /// The chat cannot be reached any more (bot blocked, chat deleted, ...).
+    Unreachable,
+    /// A temporary failure; the nagging is retried at its next interval.
+    Failed(String),
+}
+
+/// Sends reminder messages to users.
+pub trait Notifier: Send + Sync + 'static {
+    fn send(&self, nagging: &Nagging) -> impl Future<Output = Delivery> + Send;
+}
+
+pub async fn run<N: Notifier>(notifier: N, db: Db, shutdown: CancellationToken) {
     let mut ticker = tokio::time::interval(TICK_INTERVAL);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    let mut last_vacuum = Instant::now();
+    let mut last_maintenance = Instant::now();
 
     loop {
         tokio::select! {
@@ -30,28 +48,41 @@ pub async fn run(bot: Bot, db: Db, shutdown: CancellationToken) {
         }
 
         let now = Utc::now().trunc_subsecs(0);
-        if let Err(error) = fire_due_reminders(&bot, &db, now).await {
-            tracing::error!(?error, "failed to process due reminders");
-        }
-        if let Err(error) = repeat_due_naggings(&bot, &db, now).await {
-            tracing::error!(?error, "failed to process due naggings");
-        }
+        tick(&notifier, &db, now).await;
 
-        if last_vacuum.elapsed() >= VACUUM_INTERVAL {
-            if let Err(error) = db.delete_drafts_before(now - DRAFT_LIFETIME).await {
-                tracing::error!(?error, "failed to delete old drafts");
-            }
-            match db.vacuum().await {
-                Ok(()) => tracing::info!("vacuumed database"),
-                Err(error) => tracing::error!(?error, "failed to vacuum database"),
-            }
-            last_vacuum = Instant::now();
+        if last_maintenance.elapsed() >= MAINTENANCE_INTERVAL {
+            maintain(&db, now).await;
+            last_maintenance = Instant::now();
         }
     }
     tracing::info!("scheduler stopped");
 }
 
-async fn fire_due_reminders(bot: &Bot, db: &Db, now: DateTime<Utc>) -> anyhow::Result<()> {
+/// Fires reminders that are due and repeats naggings that are due, as of `now`.
+pub async fn tick<N: Notifier>(notifier: &N, db: &Db, now: DateTime<Utc>) {
+    if let Err(error) = fire_due_reminders(notifier, db, now).await {
+        tracing::error!(?error, "failed to process due reminders");
+    }
+    if let Err(error) = repeat_due_naggings(notifier, db, now).await {
+        tracing::error!(?error, "failed to process due naggings");
+    }
+}
+
+async fn maintain(db: &Db, now: DateTime<Utc>) {
+    if let Err(error) = db.delete_drafts_before(now - DRAFT_LIFETIME).await {
+        tracing::error!(?error, "failed to delete old drafts");
+    }
+    match db.vacuum().await {
+        Ok(()) => tracing::info!("vacuumed database"),
+        Err(error) => tracing::error!(?error, "failed to vacuum database"),
+    }
+}
+
+async fn fire_due_reminders<N: Notifier>(
+    notifier: &N,
+    db: &Db,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
     for reminder in db.due_reminders(now).await? {
         // Record the firing before sending: a failed send is retried by the nagging itself.
         if let Some(nagging) = db
@@ -63,27 +94,31 @@ async fn fire_due_reminders(bot: &Bot, db: &Db, now: DateTime<Utc>) -> anyhow::R
                 user_id = reminder.user_id,
                 "reminder fired"
             );
-            deliver(bot, db, &nagging).await?;
+            deliver(notifier, db, &nagging).await?;
         }
     }
     Ok(())
 }
 
-async fn repeat_due_naggings(bot: &Bot, db: &Db, now: DateTime<Utc>) -> anyhow::Result<()> {
+async fn repeat_due_naggings<N: Notifier>(
+    notifier: &N,
+    db: &Db,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
     for nagging in db.due_naggings(now).await? {
         db.reschedule_nagging(nagging.id, now + NAG_INTERVAL)
             .await?;
-        deliver(bot, db, &nagging).await?;
+        deliver(notifier, db, &nagging).await?;
     }
     Ok(())
 }
 
 /// Sends one reminder message. Delivery failures are logged rather than propagated so that
 /// one unreachable chat does not hold up everyone else's reminders.
-async fn deliver(bot: &Bot, db: &Db, nagging: &Nagging) -> anyhow::Result<()> {
-    match telegram::send_nagging(bot, nagging).await {
-        Ok(true) => {}
-        Ok(false) => {
+async fn deliver<N: Notifier>(notifier: &N, db: &Db, nagging: &Nagging) -> anyhow::Result<()> {
+    match notifier.send(nagging).await {
+        Delivery::Sent => {}
+        Delivery::Unreachable => {
             let removed = db.delete_naggings_for_user(nagging.user_id).await?;
             tracing::warn!(
                 user_id = nagging.user_id,
@@ -91,13 +126,187 @@ async fn deliver(bot: &Bot, db: &Db, nagging: &Nagging) -> anyhow::Result<()> {
                 "chat unreachable; stopped nagging it"
             );
         }
-        Err(error) => {
+        Delivery::Failed(error) => {
             tracing::warn!(
-                ?error,
+                error,
                 nagging_id = nagging.id,
                 "failed to send reminder; will retry"
             );
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::model::{Recurrence, User, UserTz, UtcOffset};
+    use chrono::TimeZone;
+
+    /// Records messages instead of sending them; per-user outcomes can be scripted.
+    #[derive(Default)]
+    struct FakeNotifier {
+        sent: Mutex<Vec<(i64, String)>>,
+        outcomes: Mutex<HashMap<i64, Delivery>>,
+    }
+
+    impl FakeNotifier {
+        fn set_outcome(&self, user_id: i64, delivery: Delivery) {
+            self.outcomes.lock().unwrap().insert(user_id, delivery);
+        }
+
+        fn take(&self) -> Vec<(i64, String)> {
+            std::mem::take(&mut self.sent.lock().unwrap())
+        }
+    }
+
+    impl Notifier for FakeNotifier {
+        async fn send(&self, nagging: &Nagging) -> Delivery {
+            let outcome = self
+                .outcomes
+                .lock()
+                .unwrap()
+                .get(&nagging.user_id)
+                .cloned()
+                .unwrap_or(Delivery::Sent);
+            if outcome == Delivery::Sent {
+                self.sent
+                    .lock()
+                    .unwrap()
+                    .push((nagging.user_id, nagging.description.clone()));
+            }
+            outcome
+        }
+    }
+
+    fn at(h: u32, m: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 13, h, m, 0).unwrap()
+    }
+
+    async fn setup() -> (FakeNotifier, Db) {
+        let db = Db::open_in_memory().unwrap();
+        for id in [1, 2] {
+            db.upsert_user(User {
+                id,
+                first_name: "Ada".into(),
+                last_name: String::new(),
+                tz: UserTz::Fixed(UtcOffset::from_minutes(0).unwrap()),
+            })
+            .await
+            .unwrap();
+        }
+        (FakeNotifier::default(), db)
+    }
+
+    #[tokio::test]
+    async fn fires_when_due_then_nags_every_minute_until_done() {
+        let (notifier, db) = setup().await;
+        db.add_reminder(1, "pills".into(), at(9, 0), Recurrence::Once)
+            .await
+            .unwrap();
+
+        tick(&notifier, &db, at(8, 59)).await;
+        assert!(notifier.take().is_empty(), "not due yet");
+
+        tick(&notifier, &db, at(9, 0)).await;
+        assert_eq!(notifier.take(), vec![(1, "pills".into())]);
+
+        tick(&notifier, &db, at(9, 0) + Duration::seconds(30)).await;
+        assert!(notifier.take().is_empty(), "waits a full interval");
+
+        tick(&notifier, &db, at(9, 1)).await;
+        assert_eq!(notifier.take(), vec![(1, "pills".into())], "nags again");
+
+        let nagging = db.due_naggings(at(9, 2)).await.unwrap().remove(0);
+        db.acknowledge_nagging(1, nagging.id).await.unwrap();
+        tick(&notifier, &db, at(9, 5)).await;
+        assert!(notifier.take().is_empty(), "done stops the nagging");
+    }
+
+    #[tokio::test]
+    async fn next_occurrence_replaces_an_unacknowledged_nagging() {
+        let (notifier, db) = setup().await;
+        db.add_reminder(1, "stretch".into(), at(9, 0), Recurrence::Daily)
+            .await
+            .unwrap();
+        tick(&notifier, &db, at(9, 0)).await;
+        notifier.take();
+
+        // A day later: exactly one message for the new occurrence, none from the old nagging.
+        let next_day = at(9, 0) + Duration::days(1);
+        tick(&notifier, &db, next_day).await;
+        assert_eq!(notifier.take(), vec![(1, "stretch".into())]);
+        assert_eq!(
+            db.due_naggings(next_day + NAG_INTERVAL)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn snoozed_nagging_waits() {
+        let (notifier, db) = setup().await;
+        db.add_reminder(1, "pills".into(), at(9, 0), Recurrence::Once)
+            .await
+            .unwrap();
+        tick(&notifier, &db, at(9, 0)).await;
+        notifier.take();
+
+        let nagging = db.due_naggings(at(9, 1)).await.unwrap().remove(0);
+        db.snooze_nagging(1, nagging.id, at(10, 0)).await.unwrap();
+        tick(&notifier, &db, at(9, 30)).await;
+        assert!(notifier.take().is_empty());
+        tick(&notifier, &db, at(10, 0)).await;
+        assert_eq!(notifier.take(), vec![(1, "pills".into())]);
+    }
+
+    #[tokio::test]
+    async fn unreachable_chat_stops_nagging_without_affecting_others() {
+        let (notifier, db) = setup().await;
+        db.add_reminder(1, "blocked".into(), at(9, 0), Recurrence::Once)
+            .await
+            .unwrap();
+        db.add_reminder(2, "fine".into(), at(9, 0), Recurrence::Once)
+            .await
+            .unwrap();
+        notifier.set_outcome(1, Delivery::Unreachable);
+
+        tick(&notifier, &db, at(9, 0)).await;
+        assert_eq!(notifier.take(), vec![(2, "fine".into())]);
+
+        tick(&notifier, &db, at(9, 1)).await;
+        assert_eq!(
+            notifier.take(),
+            vec![(2, "fine".into())],
+            "user 1 is no longer nagged"
+        );
+        assert!(
+            db.due_naggings(at(23, 0))
+                .await
+                .unwrap()
+                .iter()
+                .all(|n| n.user_id == 2)
+        );
+    }
+
+    #[tokio::test]
+    async fn temporary_failure_is_retried() {
+        let (notifier, db) = setup().await;
+        db.add_reminder(1, "pills".into(), at(9, 0), Recurrence::Once)
+            .await
+            .unwrap();
+        notifier.set_outcome(1, Delivery::Failed("timeout".into()));
+
+        tick(&notifier, &db, at(9, 0)).await;
+        assert!(notifier.take().is_empty());
+
+        notifier.set_outcome(1, Delivery::Sent);
+        tick(&notifier, &db, at(9, 1)).await;
+        assert_eq!(notifier.take(), vec![(1, "pills".into())]);
+    }
 }
