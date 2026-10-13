@@ -1,5 +1,8 @@
 name: CI
 
+# Uses shell steps only: the runner has no Node.js, so JavaScript actions such as
+# actions/checkout cannot run. Each job runs in an image that already has its tools.
+
 on:
   push:
     branches: [master]
@@ -14,14 +17,21 @@ jobs:
   check:
     name: Lint and test
     runs-on: ubuntu-latest
+    container:
+      image: rust:1-bookworm
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          auth=$(printf 'oauth2:%s' "$TOKEN" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic $auth" fetch -q --depth 1 origin "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
+      - name: Install components
+        run: rustup component add clippy rustfmt
 
       - name: Format
         run: cargo fmt --all --check
@@ -37,22 +47,31 @@ jobs:
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    container:
+      image: docker:cli
+    defaults:
+      run:
+        shell: sh
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          apk add --no-cache git >/dev/null
+          git init -q .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          auth=$(printf 'oauth2:%s' "$TOKEN" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic $auth" fetch -q --depth 1 origin "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Log in to registry
+        env:
+          REPO_USERNAME: ${{ secrets.REPO_USERNAME }}
+          REPO_PASSWORD: ${{ secrets.REPO_PASSWORD }}
+        run: echo "$REPO_PASSWORD" | docker login docker.decryptology.net -u "$REPO_USERNAME" --password-stdin
 
-      - uses: docker/login-action@v3
-        with:
-          registry: docker.decryptology.net
-          username: ${{ secrets.REPO_USERNAME }}
-          password: ${{ secrets.REPO_PASSWORD }}
+      - name: Build
+        run: docker build --pull -t "$IMAGE:latest" -t "$IMAGE:${{ github.sha }}" .
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+      - name: Push
+        run: docker push --all-tags "$IMAGE"
