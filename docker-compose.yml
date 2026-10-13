@@ -1,6 +1,6 @@
 services:
   extremelynaggybot:
-    image: docker.decryptology.net/decryptology/extremelynaggybot:latest
+    image: dev.decryptology.net/decryp7/extremelynaggybot:latest
     # To build from source instead of pulling: docker compose up -d --build
     build: .
     container_name: extremelynaggybot

@@ -64,8 +64,8 @@ TELEGRAM_BOT_TOKEN=... cargo run
 ```
 
 CI (`.gitea/workflows/ci.yml`) runs format, clippy and tests on every push and pull request.
-Pushes to `master` also build and push `docker.decryptology.net/decryptology/extremelynaggybot`.
-The workflow needs the `REPO_USERNAME` and `REPO_PASSWORD` repository secrets.
+Pushes to `master` also build and push `dev.decryptology.net/decryp7/extremelynaggybot`.
+The workflow needs the `DOCKER_USERNAME` and `DOCKER_PASSWORD` secrets.
 
 ## Source
 
