@@ -5,3 +5,4 @@ data/
 .env
 *.md
 docker-compose.yml
+Caddyfile.example

@@ -6,7 +6,8 @@ use chrono::Utc;
 use teloxide::adaptors::Throttle;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ButtonRequest, ChatKind, KeyboardButton, KeyboardMarkup, KeyboardRemove, ReplyMarkup,
+    ButtonRequest, ChatKind, KeyboardButton, KeyboardMarkup, KeyboardRemove, MenuButton,
+    ReplyMarkup, WebAppInfo,
 };
 use teloxide::utils::command::{BotCommands, ParseError};
 use teloxide::{ApiError, RequestError};
@@ -180,6 +181,21 @@ fn sender_of(msg: &Message) -> Sender {
         first_name,
         last_name,
         private: matches!(msg.chat.kind, ChatKind::Private(_)),
+    }
+}
+
+/// Sets the button next to the message box: the Mini App if configured, otherwise the
+/// command list.
+pub async fn publish_menu_button(bot: &Bot, web_app_url: Option<&url::Url>) {
+    let button = match web_app_url {
+        Some(url) => MenuButton::WebApp {
+            text: "Reminders".into(),
+            web_app: WebAppInfo { url: url.clone() },
+        },
+        None => MenuButton::Commands,
+    };
+    if let Err(error) = bot.set_chat_menu_button().menu_button(button).await {
+        tracing::warn!(?error, "failed to set the menu button");
     }
 }
 

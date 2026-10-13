@@ -1,11 +1,14 @@
 //! Configuration from environment variables.
 
 use std::env;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
+use url::Url;
 
 const DEFAULT_DATABASE_PATH: &str = "data/extremelynaggybot.db";
+const DEFAULT_WEB_LISTEN: &str = "0.0.0.0:8080";
 
 #[derive(Debug)]
 pub struct Config {
@@ -17,6 +20,10 @@ pub struct Config {
     pub sentry_dsn: Option<String>,
     /// `DATABASE_PATH`, default `data/extremelynaggybot.db`.
     pub database_path: PathBuf,
+    /// `WEB_APP_URL`: public HTTPS address of the Mini App. The app is not offered when unset.
+    pub web_app_url: Option<Url>,
+    /// `WEB_LISTEN`: address the web server binds to, default `0.0.0.0:8080`.
+    pub web_listen: SocketAddr,
 }
 
 impl Config {
@@ -31,8 +38,26 @@ impl Config {
             })
             .transpose()?;
 
+        let web_app_url = var("WEB_APP_URL")
+            .map(|url| {
+                let url = Url::parse(&url)
+                    .context("WEB_APP_URL must be a URL, e.g. https://reminders.example.com")?;
+                if url.scheme() != "https" {
+                    bail!("WEB_APP_URL must use https:// (Telegram requires it)");
+                }
+                Ok(url)
+            })
+            .transpose()?;
+        let web_listen = var("WEB_LISTEN")
+            .as_deref()
+            .unwrap_or(DEFAULT_WEB_LISTEN)
+            .parse()
+            .context("WEB_LISTEN must be an address like 0.0.0.0:8080")?;
+
         Ok(Self {
             telegram_token,
+            web_app_url,
+            web_listen,
             admin_chat_id,
             sentry_dsn: var("SENTRY_DSN"),
             database_path: var("DATABASE_PATH")

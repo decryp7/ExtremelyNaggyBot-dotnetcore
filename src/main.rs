@@ -8,6 +8,7 @@ mod panels;
 mod scheduler;
 mod telegram;
 mod time_input;
+mod web;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -72,10 +73,12 @@ async fn run(config: Config) -> anyhow::Result<()> {
     let bot_info = BotInfo {
         name: me.first_name.clone(),
         username: me.username().to_owned(),
+        web_app: config.web_app_url.clone(),
     };
     tracing::info!(id = %me.id, username = %bot_info.username, "connected to Telegram");
 
     telegram::publish_commands(&bot).await;
+    telegram::publish_menu_button(&bot, config.web_app_url.as_ref()).await;
     if let Some(chat_id) = config.admin_chat_id
         && let Err(error) = bot
             .send_message(ChatId(chat_id), "Extremely Naggy Bot is online!")
@@ -86,6 +89,11 @@ async fn run(config: Config) -> anyhow::Result<()> {
 
     let shutdown = CancellationToken::new();
     let scheduler = tokio::spawn(scheduler::run(bot.clone(), db.clone(), shutdown.clone()));
+    let web_state = Arc::new(web::WebState {
+        db: db.clone(),
+        bot_token: config.telegram_token.clone(),
+    });
+    let web_server = tokio::spawn(web::serve(config.web_listen, web_state, shutdown.clone()));
 
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(telegram::handle_message))
@@ -113,6 +121,7 @@ async fn run(config: Config) -> anyhow::Result<()> {
     dispatcher.dispatch().await;
     shutdown.cancel();
     scheduler.await.context("scheduler task panicked")?;
+    web_server.await.context("web server task panicked")??;
     Ok(())
 }
 

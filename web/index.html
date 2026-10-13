@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Reminders</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #ffffff);
+      --bg2: var(--tg-theme-secondary-bg-color, #f2f2f7);
+      --text: var(--tg-theme-text-color, #000000);
+      --hint: var(--tg-theme-hint-color, #8e8e93);
+      --accent: var(--tg-theme-button-color, #2481cc);
+      --accent-text: var(--tg-theme-button-text-color, #ffffff);
+      --link: var(--tg-theme-link-color, #2481cc);
+      --danger: var(--tg-theme-destructive-text-color, #e53935);
+      --section: var(--tg-theme-section-bg-color, var(--bg));
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; padding: 12px 12px calc(24px + env(safe-area-inset-bottom));
+      font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg2); color: var(--text);
+    }
+    [hidden] { display: none !important; }
+    h1 { font-size: 22px; margin: 4px 4px 12px; }
+    .hint { color: var(--hint); font-size: 14px; }
+    .card { background: var(--section); border-radius: var(--radius); overflow: hidden; margin-bottom: 12px; }
+    .banner { padding: 12px 14px; font-size: 14px; }
+    .banner button { margin-top: 8px; }
+    .item { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit;
+            font: inherit; padding: 12px 14px; cursor: pointer; }
+    .item + .item { border-top: 1px solid var(--bg2); }
+    .item .title { font-weight: 600; word-break: break-word; }
+    .item .meta { color: var(--hint); font-size: 14px; margin-top: 2px; }
+    .empty { padding: 32px 16px; text-align: center; color: var(--hint); }
+    .add { width: 100%; padding: 14px; border: 0; border-radius: var(--radius);
+           background: var(--accent); color: var(--accent-text); font: 600 16px/1 inherit; cursor: pointer; }
+    label { display: block; color: var(--hint); font-size: 13px; text-transform: uppercase;
+            letter-spacing: .03em; margin: 16px 4px 6px; }
+    textarea, input {
+      width: 100%; border: 0; border-radius: var(--radius); padding: 12px 14px;
+      background: var(--section); color: var(--text); font: inherit;
+    }
+    textarea { resize: none; min-height: 72px; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; min-width: 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      border: 0; border-radius: 999px; padding: 8px 14px; background: var(--section);
+      color: var(--text); font: inherit; font-size: 14px; cursor: pointer;
+    }
+    .chip.selected { background: var(--accent); color: var(--accent-text); }
+    .danger { width: 100%; margin-top: 24px; padding: 14px; border: 0; border-radius: var(--radius);
+              background: var(--section); color: var(--danger); font: inherit; cursor: pointer; }
+    .link { border: 0; background: none; color: var(--link); font: inherit; padding: 0; cursor: pointer; }
+    .error { color: var(--danger); font-size: 14px; margin: 8px 4px 0; }
+    .center { padding: 48px 16px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="loading" class="center hint">Loading…</div>
+  <div id="fatal" class="center" hidden></div>
+
+  <section id="list-view" hidden>
+    <h1>Reminders</h1>
+    <div id="tz-banner" class="card banner" hidden></div>
+    <div id="list" class="card"></div>
+    <button id="add" class="add" type="button">＋ New reminder</button>
+    <p class="hint" style="margin: 12px 4px">Timezone: <span id="tz-name"></span></p>
+  </section>
+
+  <section id="form-view" hidden>
+    <h1 id="form-title">New reminder</h1>
+    <textarea id="description" maxlength="1000" placeholder="What should I remind you about?"></textarea>
+
+    <label>When</label>
+    <div class="chips" id="quick"></div>
+    <div class="row" style="margin-top: 8px">
+      <input id="date" type="date" aria-label="Date">
+      <input id="time" type="time" aria-label="Time">
+    </div>
+
+    <label>Repeat</label>
+    <div class="chips" id="repeat"></div>
+
+    <p id="form-error" class="error" hidden></p>
+    <button id="delete" class="danger" type="button" hidden>Delete reminder</button>
+  </section>
+
+<script>
+(() => {
+  "use strict";
+  const tg = window.Telegram?.WebApp;
+  const $ = (id) => document.getElementById(id);
+  const REPEATS = [
+    ["once", "Once"], ["daily", "Every day"], ["weekdays", "Weekdays"],
+    ["weekly", "Weekly"], ["monthly", "Monthly"], ["yearly", "Yearly"],
+  ];
+
+  let state = null;          // { timezone, timezone_id, now, reminders }
+  let editing = null;        // reminder being edited, or null for a new one
+  let repeat = "once";
+
+  // ---- API ------------------------------------------------------------------------
+  async function api(method, path, body) {
+    const response = await fetch(path, {
+      method,
+      headers: {
+        "Authorization": "tma " + tg.initData,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (response.status === 204) return null;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Something went wrong.");
+    return data;
+  }
+
+  // ---- naive local date-times ("YYYY-MM-DDTHH:MM") in the user's timezone ----------
+  const parse = (s) => new Date(s + ":00Z");
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  const addMinutes = (d, m) => new Date(d.getTime() + m * 60000);
+  const atTime = (d, h, m, days = 0) => {
+    const r = new Date(d.getTime());
+    r.setUTCDate(r.getUTCDate() + days);
+    r.setUTCHours(h, m, 0, 0);
+    return r;
+  };
+
+  function quickChoices() {
+    const now = parse(state.now);
+    const evening = atTime(now, 20, 0);
+    const lateEvening = now.getTime() > addMinutes(evening, -30).getTime();
+    const daysToMonday = ((8 - now.getUTCDay()) % 7) || 7;
+    return [
+      ["In 15 min", addMinutes(now, 15)],
+      ["In 1 hour", addMinutes(now, 60)],
+      [lateEvening ? "Tomorrow 20:00" : "This evening", lateEvening ? atTime(now, 20, 0, 1) : evening],
+      ["Tomorrow 09:00", atTime(now, 9, 0, 1)],
+      ["Monday 09:00", atTime(now, 9, 0, daysToMonday)],
+    ];
+  }
+
+  // ---- rendering ------------------------------------------------------------------
+  function show(view) {
+    for (const id of ["loading", "fatal", "list-view", "form-view"]) $(id).hidden = id !== view;
+    if (view === "form-view") {
+      tg.BackButton.show();
+      tg.MainButton.setParams({ text: editing ? "Save changes" : "Save reminder", is_visible: true, is_active: true });
+    } else {
+      tg.BackButton.hide();
+      tg.MainButton.hide();
+    }
+  }
+
+  function fatal(message) {
+    $("fatal").textContent = message;
+    show("fatal");
+  }
+
+  function renderList() {
+    $("tz-name").textContent = state.timezone;
+    const list = $("list");
+    list.replaceChildren();
+    if (state.reminders.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No reminders yet.";
+      list.append(empty);
+    }
+    for (const reminder of state.reminders) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "item";
+      const title = document.createElement("div");
+      title.className = "title";
+      title.textContent = reminder.description;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = `${reminder.when} · ${reminder.relative} · ${reminder.repeat}`;
+      item.append(title, meta);
+      item.addEventListener("click", () => openForm(reminder));
+      list.append(item);
+    }
+    renderTimezoneBanner();
+    show("list-view");
+  }
+
+  function renderTimezoneBanner() {
+    const device = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const banner = $("tz-banner");
+    if (!device || device === state.timezone_id) {
+      banner.hidden = true;
+      return;
+    }
+    banner.replaceChildren();
+    const text = document.createElement("div");
+    text.textContent = `This device is in ${device}, but your reminders use ${state.timezone}.`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "link";
+    button.textContent = `Use ${device}`;
+    button.addEventListener("click", async () => {
+      try {
+        state = await api("PUT", "/api/timezone", { timezone: device });
+        renderList();
+      } catch (e) {
+        tg.showAlert(e.message);
+      }
+    });
+    banner.append(text, button);
+    banner.hidden = false;
+  }
+
+  function setWhen(value) {
+    const [date, time] = value.split("T");
+    $("date").value = date;
+    $("time").value = time;
+    highlightQuick();
+  }
+
+  function highlightQuick() {
+    const value = `${$("date").value}T${$("time").value}`;
+    for (const chip of $("quick").children) chip.classList.toggle("selected", chip.dataset.value === value);
+  }
+
+  function setRepeat(value) {
+    repeat = value;
+    for (const chip of $("repeat").children) chip.classList.toggle("selected", chip.dataset.value === value);
+  }
+
+  function openForm(reminder) {
+    editing = reminder;
+    $("form-title").textContent = reminder ? "Edit reminder" : "New reminder";
+    $("description").value = reminder ? reminder.description : "";
+    $("form-error").hidden = true;
+    $("delete").hidden = !reminder;
+    $("date").min = state.now.split("T")[0];
+
+    const quick = $("quick");
+    quick.replaceChildren();
+    for (const [label, date] of quickChoices()) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.textContent = label;
+      chip.dataset.value = fmt(date);
+      chip.addEventListener("click", () => { setWhen(chip.dataset.value); tg.HapticFeedback.selectionChanged(); });
+      quick.append(chip);
+    }
+
+    setWhen(reminder ? reminder.at : fmt(atTime(parse(state.now), 9, 0, 1)));
+    setRepeat(reminder ? reminder.recurrence : "once");
+    show("form-view");
+    if (!reminder) $("description").focus();
+  }
+
+  async function save() {
+    const body = {
+      description: $("description").value.trim(),
+      at: `${$("date").value}T${$("time").value}`,
+      recurrence: repeat,
+    };
+    if (!body.description) return formError("Please enter what to remind you about.");
+    if (!$("date").value || !$("time").value) return formError("Please pick a date and time.");
+
+    tg.MainButton.showProgress();
+    try {
+      if (editing) await api("PUT", `/api/reminders/${editing.id}`, body);
+      else await api("POST", "/api/reminders", body);
+      tg.HapticFeedback.notificationOccurred("success");
+      await reload();
+    } catch (e) {
+      formError(e.message);
+    } finally {
+      tg.MainButton.hideProgress();
+    }
+  }
+
+  function formError(message) {
+    $("form-error").textContent = message;
+    $("form-error").hidden = false;
+    tg.HapticFeedback.notificationOccurred("error");
+  }
+
+  async function reload() {
+    state = await api("GET", "/api/state");
+    if (!state.timezone) {
+      const device = Intl.DateTimeFormat().resolvedOptions().timeZone || offsetString();
+      state = await api("PUT", "/api/timezone", { timezone: device });
+    }
+    editing = null;
+    renderList();
+  }
+
+  function offsetString() {
+    const minutes = -new Date().getTimezoneOffset();
+    const sign = minutes < 0 ? "-" : "+";
+    const abs = Math.abs(minutes);
+    return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  }
+
+  // ---- start ------------------------------------------------------------------------
+  if (!tg || !tg.initData) {
+    fatal("Please open this page from the bot in Telegram.");
+    return;
+  }
+  tg.ready();
+  tg.expand();
+
+  for (const [value, label] of REPEATS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = label;
+    chip.dataset.value = value;
+    chip.addEventListener("click", () => { setRepeat(value); tg.HapticFeedback.selectionChanged(); });
+    $("repeat").append(chip);
+  }
+  $("date").addEventListener("change", highlightQuick);
+  $("time").addEventListener("change", highlightQuick);
+  $("add").addEventListener("click", () => openForm(null));
+  $("delete").addEventListener("click", () => {
+    tg.showConfirm("Delete this reminder?", async (confirmed) => {
+      if (!confirmed) return;
+      try {
+        await api("DELETE", `/api/reminders/${editing.id}`);
+        tg.HapticFeedback.notificationOccurred("success");
+        await reload();
+      } catch (e) {
+        formError(e.message);
+      }
+    });
+  });
+  tg.MainButton.onClick(save);
+  tg.BackButton.onClick(() => { editing = null; renderList(); });
+
+  reload().catch((e) => fatal(e.message));
+})();
+</script>
+</body>
+</html>

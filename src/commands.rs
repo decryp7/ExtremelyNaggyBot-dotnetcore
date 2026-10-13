@@ -4,9 +4,11 @@ use std::sync::LazyLock;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use regex::Regex;
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo};
 use teloxide::utils::command::BotCommands;
+use url::Url;
 
-use crate::conversation::{self, Reply, Sender};
+use crate::conversation::{self, Markup, Reply, Sender};
 use crate::db::Db;
 use crate::model::Recurrence;
 use crate::panels;
@@ -40,6 +42,30 @@ pub enum Command {
 pub struct BotInfo {
     pub name: String,
     pub username: String,
+    /// Mini App address, if configured.
+    pub web_app: Option<Url>,
+}
+
+impl BotInfo {
+    /// A button opening the Mini App. Telegram only allows these in private chats.
+    fn app_button(&self, sender: &Sender) -> Option<InlineKeyboardButton> {
+        self.web_app.as_ref().filter(|_| sender.private).map(|url| {
+            InlineKeyboardButton::web_app("📱 Open reminders app", WebAppInfo { url: url.clone() })
+        })
+    }
+
+    /// Adds the Mini App button to a reply, keeping any inline buttons it already has.
+    fn with_app_button(&self, sender: &Sender, mut reply: Reply) -> Reply {
+        let Some(button) = self.app_button(sender) else {
+            return reply;
+        };
+        reply.markup = match reply.markup {
+            Markup::Inline(keyboard) => Markup::Inline(keyboard.append_row([button])),
+            Markup::None => Markup::Inline(InlineKeyboardMarkup::new([[button]])),
+            other => other,
+        };
+        reply
+    }
 }
 
 pub async fn execute(
@@ -54,11 +80,21 @@ pub async fn execute(
 
     Ok(match command {
         Command::Start => match user {
-            Some(_) => vec![Reply::text(format!(
-                "Hello {name}, {} at your service.\n\n{}",
-                bot.name,
-                usage(sender)
-            ))],
+            Some(_) => vec![bot.with_app_button(
+                sender,
+                Reply::text(format!(
+                    "Hello {name}, {} at your service.\n\n{}",
+                    bot.name,
+                    usage(sender)
+                )),
+            )],
+            None if bot.app_button(sender).is_some() => vec![bot.with_app_button(
+                sender,
+                Reply::text(format!(
+                    "Hello {name}, I'm {}. I remind you about things and keep nagging every minute until you tap Done.\n\nOpen the app below to add reminders, or just send me a message like \"call mum\".",
+                    bot.name
+                )),
+            )],
             None => vec![conversation::ask_timezone(
                 sender,
                 &format!(
@@ -67,11 +103,14 @@ pub async fn execute(
                 ),
             )],
         },
-        Command::Help => vec![Reply::text(format!(
-            "{}\n\n{}",
-            usage(sender),
-            Command::descriptions().username(&bot.username)
-        ))],
+        Command::Help => vec![bot.with_app_button(
+            sender,
+            Reply::text(format!(
+                "{}\n\n{}",
+                usage(sender),
+                Command::descriptions().username(&bot.username)
+            )),
+        )],
         Command::About => vec![Reply::text(format!(
             "I'm an extremely naggy reminder bot: once a reminder is due, I repeat it every minute until you tap Done.\n\nBug reports: @decryp7\nSource code: {SOURCE_URL}"
         ))],
@@ -81,13 +120,9 @@ pub async fn execute(
         )],
         Command::RemindMe(text) => match (&user, legacy_reminder(&text)) {
             (Some(user), Some((description, at, recurrence))) => {
-                let mut due = user.tz.utc(at);
-                if due <= now {
-                    match recurrence.next_after(due, now, user.tz) {
-                        Some(next) => due = next,
-                        None => return Ok(vec![Reply::text("That time is already in the past.")]),
-                    }
-                }
+                let Some(due) = recurrence.first_due(at, user.tz, now) else {
+                    return Ok(vec![Reply::text("That time is already in the past.")]);
+                };
                 let reminder = db
                     .add_reminder(user.id, description, due, recurrence)
                     .await?;
@@ -99,7 +134,7 @@ pub async fn execute(
         Command::List => match user {
             Some(user) => {
                 let reminders = db.reminders_for_user(user.id).await?;
-                vec![panels::list(&reminders, &user).into()]
+                vec![bot.with_app_button(sender, panels::list(&reminders, &user).into())]
             }
             None => vec![not_registered(sender)],
         },

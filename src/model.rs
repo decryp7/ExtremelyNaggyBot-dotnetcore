@@ -68,6 +68,33 @@ impl Recurrence {
         Some(next)
     }
 
+    /// When a reminder set for local time `at` first fires: `at` itself, or the next
+    /// occurrence if `at` has passed. `None` if a one-off time has passed.
+    pub fn first_due(
+        self,
+        at: NaiveDateTime,
+        tz: UserTz,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        let due = tz.utc(at);
+        if due > now {
+            Some(due)
+        } else {
+            self.next_after(due, now, tz)
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Recurrence::Once => "once",
+            Recurrence::Daily => "daily",
+            Recurrence::Weekdays => "weekdays",
+            Recurrence::Weekly => "weekly",
+            Recurrence::Monthly => "monthly",
+            Recurrence::Yearly => "yearly",
+        }
+    }
+
     /// Short human description relative to the first occurrence, e.g. "every Tue".
     pub fn describe(self, first: NaiveDateTime) -> String {
         match self {

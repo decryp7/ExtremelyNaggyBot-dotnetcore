@@ -325,28 +325,23 @@ pub async fn on_callback(
         },
 
         Action::Save(subject, at, recurrence) => {
-            let mut due = user.tz.utc(at);
-            if due <= now {
-                match recurrence.next_after(due, now, user.tz) {
-                    Some(next) => due = next,
-                    None => {
-                        let Some(text) = subject_text(db, user_id, subject).await? else {
-                            return Ok(gone(message_text));
-                        };
-                        return Ok(CallbackReply {
-                            toast: Some("That time has already passed. Pick another.".into()),
-                            edit: Some(panels::when(subject, &text, now_local)),
-                        });
-                    }
-                }
-            }
+            let Some(due) = recurrence.first_due(at, user.tz, now) else {
+                let Some(text) = subject_text(db, user_id, subject).await? else {
+                    return Ok(gone(message_text));
+                };
+                return Ok(CallbackReply {
+                    toast: Some("That time has already passed. Pick another.".into()),
+                    edit: Some(panels::when(subject, &text, now_local)),
+                });
+            };
             let (saved, heading) = match subject {
                 Subject::Draft(id) => (
                     db.save_draft(user_id, id, due, recurrence).await?,
                     "✅ Reminder saved",
                 ),
                 Subject::Reminder(id) => (
-                    db.update_reminder(user_id, id, due, recurrence).await?,
+                    db.update_reminder(user_id, id, None, due, recurrence)
+                        .await?,
                     "✅ Reminder updated",
                 ),
             };

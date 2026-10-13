@@ -11,6 +11,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
     && rm -rf src
 
 COPY migrations ./migrations
+COPY web ./web
 COPY src ./src
 RUN touch src/main.rs && cargo build --release --locked
 
@@ -23,4 +24,8 @@ WORKDIR /app
 COPY --from=build /src/target/release/extremely-naggy-bot /usr/local/bin/extremely-naggy-bot
 USER bot
 VOLUME ["/app/data"]
+# Mini App web server (see WEB_APP_URL).
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
 ENTRYPOINT ["/usr/local/bin/extremely-naggy-bot"]

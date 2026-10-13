@@ -9,6 +9,15 @@ Written in Rust ([teloxide](https://github.com/teloxide/teloxide) + SQLite).
 
 ## Using it
 
+### Mini App
+
+With `WEB_APP_URL` set, a **Reminders** button next to the message box opens an app inside
+Telegram: a list of your reminders and a form with the phone's own date and time pickers,
+quick choices (`In 15 min`, `Tomorrow 09:00`, …) and repeat options. Tap a reminder to edit or
+delete it. Your timezone is taken from the phone automatically.
+
+### Chat
+
 Send the bot any message, for example `call mum`, then pick a time with the buttons:
 
 1. **When?** `15 min` · `1 hour` · `3 hours` · `This evening 20:00` · `Tomorrow 09:00` · `📅 Pick a date`
@@ -48,11 +57,26 @@ docker compose logs -f
 
 The SQLite database lives in `./data/extremelynaggybot.db`.
 
+### Mini App behind Caddy
+
+The container serves the Mini App over plain HTTP on port 8080; your reverse proxy provides
+HTTPS (Telegram requires it).
+
+1. Point a DNS record (e.g. `reminders.example.com`) at your server.
+2. Set `WEB_APP_URL=https://reminders.example.com` in `.env`.
+3. Make port 8080 reachable by Caddy: join Caddy's Docker network, or publish it on
+   `127.0.0.1:8080`. Both options are in `docker-compose.yml`.
+4. Add the site from `Caddyfile.example` to your Caddyfile and reload Caddy.
+
+The bot sets the menu button itself on startup. No @BotFather setup is needed.
+
 ### Configuration
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | yes | Bot token from @BotFather. |
+| `WEB_APP_URL` | no | Public `https://` address of the Mini App. Unset disables it. |
+| `WEB_LISTEN` | no | Web server address in the container, default `0.0.0.0:8080`. |
 | `ADMIN_CHATID` | no | Chat that receives an "online" message at startup. |
 | `SENTRY_DSN` | no | Enables Sentry error reporting. |
 | `DATABASE_PATH` | no | Defaults to `data/extremelynaggybot.db`. |

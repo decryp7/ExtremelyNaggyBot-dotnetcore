@@ -185,22 +185,30 @@ impl Db {
         .await
     }
 
-    /// Changes when and how often one of the user's reminders fires.
+    /// Changes one of the user's reminders. The description is kept if `description` is `None`.
     pub async fn update_reminder(
         &self,
         user_id: i64,
         reminder_id: i64,
+        description: Option<String>,
         due_at: DateTime<Utc>,
         recurrence: Recurrence,
     ) -> anyhow::Result<Option<Reminder>> {
         self.call(move |conn| {
             conn.query_row(
                 &format!(
-                    "UPDATE reminders SET due_at = ?1, recurrence = ?2
-                     WHERE reminder_id = ?3 AND user_id = ?4
+                    "UPDATE reminders
+                     SET description = COALESCE(?1, description), due_at = ?2, recurrence = ?3
+                     WHERE reminder_id = ?4 AND user_id = ?5
                      RETURNING {REMINDER_COLUMNS}"
                 ),
-                params![DbTime(due_at), recurrence.to_db(), reminder_id, user_id],
+                params![
+                    description,
+                    DbTime(due_at),
+                    recurrence.to_db(),
+                    reminder_id,
+                    user_id
+                ],
                 reminder_from_row,
             )
             .optional()
@@ -880,19 +888,29 @@ mod tests {
 
         let later = utc(2026, 3, 3, 9, 0);
         assert_eq!(
-            db.update_reminder(2, reminder.id, later, Recurrence::Daily)
+            db.update_reminder(2, reminder.id, None, later, Recurrence::Daily)
                 .await
                 .unwrap(),
             None
         );
         let updated = db
-            .update_reminder(1, reminder.id, later, Recurrence::Daily)
+            .update_reminder(
+                1,
+                reminder.id,
+                Some("vitamins".into()),
+                later,
+                Recurrence::Daily,
+            )
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
-            (updated.due_at, updated.recurrence),
-            (later, Recurrence::Daily)
+            (
+                updated.description.as_str(),
+                updated.due_at,
+                updated.recurrence
+            ),
+            ("vitamins", later, Recurrence::Daily)
         );
 
         let nagging = db
