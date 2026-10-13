@@ -19,7 +19,9 @@ use hmac::{KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
+use crate::calendar;
 use crate::db::Db;
 use crate::model::{Recurrence, Reminder, User, UserTz};
 use crate::panels;
@@ -35,6 +37,8 @@ type HmacSha256 = hmac::Hmac<Sha256>;
 pub struct WebState {
     pub db: Db,
     pub bot_token: String,
+    /// Public address; calendar feed links are built from it.
+    pub web_app_url: Option<Url>,
 }
 
 pub async fn serve(
@@ -63,6 +67,9 @@ pub fn router(state: Arc<WebState>) -> Router {
             "/api/reminders/{id}",
             put(update_reminder).delete(delete_reminder),
         )
+        .route("/api/calendar", get(get_calendar_link))
+        .route("/api/calendar/reset", post(reset_calendar_link))
+        .route("/calendar/{file}", get(calendar_feed))
         .with_state(state)
 }
 
@@ -198,6 +205,79 @@ async fn delete_reminder(
     } else {
         Err(ApiError::NotFound)
     }
+}
+
+#[derive(Serialize)]
+struct CalendarLink {
+    url: String,
+    webcal: String,
+}
+
+async fn get_calendar_link(
+    State(state): State<Arc<WebState>>,
+    auth: AuthUser,
+) -> Result<Json<CalendarLink>, ApiError> {
+    calendar_link(&state, auth.id, false).await.map(Json)
+}
+
+async fn reset_calendar_link(
+    State(state): State<Arc<WebState>>,
+    auth: AuthUser,
+) -> Result<Json<CalendarLink>, ApiError> {
+    calendar_link(&state, auth.id, true).await.map(Json)
+}
+
+async fn calendar_link(
+    state: &WebState,
+    user_id: i64,
+    reset: bool,
+) -> Result<CalendarLink, ApiError> {
+    let base = state
+        .web_app_url
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("The calendar feed is not enabled.".into()))?;
+    let token = state
+        .db
+        .calendar_token(user_id, reset)
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("Set your timezone first.".into()))?;
+    let url =
+        calendar::feed_url(base, &token).ok_or_else(|| anyhow::anyhow!("invalid WEB_APP_URL"))?;
+    Ok(CalendarLink {
+        webcal: calendar::webcal(&url),
+        url: url.into(),
+    })
+}
+
+/// `GET /calendar/<token>.ics`: the feed itself. The unguessable token is the credential,
+/// as calendar apps cannot send Telegram's signed data.
+async fn calendar_feed(
+    State(state): State<Arc<WebState>>,
+    Path(file): Path<String>,
+) -> Result<Response, ApiError> {
+    let token = file.strip_suffix(".ics").unwrap_or(&file);
+    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ApiError::NotFound);
+    }
+    let user = state
+        .db
+        .user_by_calendar_token(token.to_owned())
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let reminders = state.db.reminders_for_user(user.id).await?;
+    let body = calendar::feed(&reminders, user.tz, Utc::now());
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/calendar; charset=utf-8"),
+            (header::CACHE_CONTROL, "private, max-age=300"),
+            (
+                header::CONTENT_DISPOSITION,
+                "inline; filename=\"reminders.ics\"",
+            ),
+        ],
+        body,
+    )
+        .into_response())
 }
 
 async fn load_state(db: &Db, user_id: i64, now: DateTime<Utc>) -> anyhow::Result<StateView> {
@@ -482,6 +562,7 @@ mod tests {
         let app = router(Arc::new(WebState {
             db,
             bot_token: TOKEN.into(),
+            web_app_url: Some(Url::parse("https://reminders.example.com").unwrap()),
         }));
         let ada = init_data(42, Utc::now());
         let eve = init_data(66, Utc::now());
@@ -574,6 +655,7 @@ mod tests {
         let app = router(Arc::new(WebState {
             db,
             bot_token: TOKEN.into(),
+            web_app_url: Some(Url::parse("https://reminders.example.com").unwrap()),
         }));
         let (status, body) = call(&app, "GET", "/", None, None).await;
         assert_eq!(status, StatusCode::OK);
@@ -581,6 +663,69 @@ mod tests {
         assert_eq!(
             call(&app, "GET", "/health", None, None).await,
             (StatusCode::OK, "ok".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn calendar_feed_flow() {
+        let db = Db::open_in_memory().unwrap();
+        let app = router(Arc::new(WebState {
+            db,
+            bot_token: TOKEN.into(),
+            web_app_url: Some(Url::parse("https://reminders.example.com").unwrap()),
+        }));
+        let ada = init_data(42, Utc::now());
+
+        assert_eq!(
+            call(&app, "GET", "/api/calendar", Some(&ada), None).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        call(
+            &app,
+            "PUT",
+            "/api/timezone",
+            Some(&ada),
+            Some(r#"{"timezone":"Europe/London"}"#),
+        )
+        .await;
+        let reminder = r#"{"description":"stretch","at":"2099-01-02T09:30","recurrence":"daily"}"#;
+        call(&app, "POST", "/api/reminders", Some(&ada), Some(reminder)).await;
+
+        let (status, body) = call(&app, "GET", "/api/calendar", Some(&ada), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let link: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let url = link["url"].as_str().unwrap();
+        assert!(
+            url.starts_with("https://reminders.example.com/calendar/"),
+            "{url}"
+        );
+        assert!(
+            link["webcal"]
+                .as_str()
+                .unwrap()
+                .starts_with("webcal://reminders.example.com/")
+        );
+        let path = url.trim_start_matches("https://reminders.example.com");
+
+        let (status, ics) = call(&app, "GET", path, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(ics.contains("SUMMARY:stretch"), "{ics}");
+        assert!(
+            ics.contains("DTSTART;TZID=Europe/London:20990102T093000"),
+            "{ics}"
+        );
+
+        let (_, body) = call(&app, "POST", "/api/calendar/reset", Some(&ada), None).await;
+        let new_url: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_ne!(new_url["url"], link["url"]);
+        assert_eq!(
+            call(&app, "GET", path, None, None).await.0,
+            StatusCode::NOT_FOUND,
+            "old link revoked"
+        );
+        assert_eq!(
+            call(&app, "GET", "/calendar/nope.ics", None, None).await.0,
+            StatusCode::NOT_FOUND
         );
     }
 }

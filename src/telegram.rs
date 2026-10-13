@@ -80,6 +80,7 @@ pub async fn handle_callback(
         user_id,
         data,
         message.and_then(|m| m.text()),
+        state.bot_info.web_app.as_ref(),
         Utc::now(),
     )
     .await

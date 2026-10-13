@@ -16,6 +16,21 @@ Telegram: a list of your reminders and a form with the phone's own date and time
 quick choices (`In 15 min`, `Tomorrow 09:00`, …) and repeat options. Tap a reminder to edit or
 delete it. Your timezone is taken from the phone automatically.
 
+### Phone calendar (works offline)
+
+`/calendar` (or **📅 Add to my phone's calendar** in the Mini App) gives you a private
+calendar link. Subscribe to it once in your calendar app, and your reminders appear there
+with alarms at the time and again after 5 and 10 minutes. The phone fires those itself,
+even without a connection.
+
+- **iPhone:** Settings → Calendar → Accounts → Add Account → Other → Add Subscribed Calendar,
+  paste the link, and turn **off** "Remove Alerts".
+- **Google Calendar:** Other calendars → + → From URL. Google refreshes subscribed calendars
+  only every few hours and may not show alerts for them.
+
+Anyone with the link can see your reminders; **New link** revokes the old one. The feed
+needs `WEB_APP_URL` because it is served by the same web server.
+
 ### Chat
 
 Send the bot any message, for example `call mum`, then pick a time with the buttons:
@@ -39,6 +54,7 @@ Forwarding a message to the bot turns it into a reminder too.
 | `/list` | See your reminders; tap one to change its time or repeat, or delete it. |
 | `/remindme <text>` | Add a reminder (also works in groups). |
 | `/timezone [city]` | Show or change your timezone. |
+| `/calendar` | Private link to see your reminders in your phone's calendar. |
 | `/clearall` | Delete all your reminders. |
 | `/unregister` | Delete all your data. |
 | `/help`, `/about` | Help and information. |

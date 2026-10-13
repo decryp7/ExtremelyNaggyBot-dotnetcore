@@ -70,6 +70,21 @@
     <div id="list" class="card"></div>
     <button id="add" class="add" type="button">＋ New reminder</button>
     <p class="hint" style="margin: 12px 4px">Timezone: <span id="tz-name"></span></p>
+
+    <div class="card banner">
+      <button id="calendar-toggle" class="link" type="button">📅 Add to my phone's calendar</button>
+      <div id="calendar" hidden>
+        <p class="hint">Subscribe once and your reminders appear in your calendar app, with alarms that
+          work even offline. On iPhone: Settings → Calendar → Accounts → Add Account → Other →
+          Add Subscribed Calendar, paste the link, and turn off "Remove Alerts".</p>
+        <input id="calendar-url" readonly aria-label="Calendar link">
+        <div class="row" style="margin-top: 8px">
+          <button id="calendar-copy" class="chip" type="button">Copy link</button>
+          <button id="calendar-reset" class="chip" type="button">New link</button>
+        </div>
+        <p class="hint">Keep it private: anyone with the link can see your reminders.</p>
+      </div>
+    </div>
   </section>
 
   <section id="form-view" hidden>
@@ -305,6 +320,17 @@
     return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
   }
 
+  // ---- calendar feed ----------------------------------------------------------------
+  async function showCalendar(reset) {
+    try {
+      const link = await api(reset ? "POST" : "GET", reset ? "/api/calendar/reset" : "/api/calendar");
+      $("calendar-url").value = link.webcal;
+      $("calendar").hidden = false;
+    } catch (e) {
+      tg.showAlert(e.message);
+    }
+  }
+
   // ---- start ------------------------------------------------------------------------
   if (!tg || !tg.initData) {
     fatal("Please open this page from the bot in Telegram.");
@@ -335,6 +361,25 @@
       } catch (e) {
         formError(e.message);
       }
+    });
+  });
+  $("calendar-toggle").addEventListener("click", () => {
+    if ($("calendar").hidden) showCalendar(false);
+    else $("calendar").hidden = true;
+  });
+  $("calendar-copy").addEventListener("click", async () => {
+    $("calendar-url").select();
+    try {
+      await navigator.clipboard.writeText($("calendar-url").value);
+      $("calendar-copy").textContent = "Copied ✓";
+      tg.HapticFeedback.notificationOccurred("success");
+    } catch {
+      $("calendar-copy").textContent = "Select and copy above";
+    }
+  });
+  $("calendar-reset").addEventListener("click", () => {
+    tg.showConfirm("Create a new link? The old link will stop working.", (confirmed) => {
+      if (confirmed) showCalendar(true);
     });
   });
   tg.MainButton.onClick(save);

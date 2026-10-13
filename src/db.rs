@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_initial.sql"),
     include_str!("../migrations/002_offsets_and_scheduling.sql"),
     include_str!("../migrations/003_timezones_and_drafts.sql"),
+    include_str!("../migrations/004_calendar_feed.sql"),
 ];
 
 const USER_COLUMNS: &str = "user_id, first_name, last_name, utc_offset_minutes, timezone";
@@ -123,6 +124,39 @@ impl Db {
             conn.query_row(
                 &format!("SELECT {USER_COLUMNS} FROM users WHERE user_id = ?1"),
                 [user_id],
+                user_from_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    /// The user's calendar feed token, created on first use. `reset` replaces it, which
+    /// revokes the previous feed URL. Returns `None` if the user is not registered.
+    pub async fn calendar_token(
+        &self,
+        user_id: i64,
+        reset: bool,
+    ) -> anyhow::Result<Option<String>> {
+        let candidate = new_token()?;
+        self.call(move |conn| {
+            let sql = if reset {
+                "UPDATE users SET calendar_token = ?1 WHERE user_id = ?2 RETURNING calendar_token"
+            } else {
+                "UPDATE users SET calendar_token = COALESCE(calendar_token, ?1) WHERE user_id = ?2
+                 RETURNING calendar_token"
+            };
+            conn.query_row(sql, params![candidate, user_id], |row| row.get(0))
+                .optional()
+        })
+        .await
+    }
+
+    pub async fn user_by_calendar_token(&self, token: String) -> anyhow::Result<Option<User>> {
+        self.call(move |conn| {
+            conn.query_row(
+                &format!("SELECT {USER_COLUMNS} FROM users WHERE calendar_token = ?1"),
+                [token],
                 user_from_row,
             )
             .optional()
@@ -492,6 +526,13 @@ impl Db {
     pub async fn vacuum(&self) -> anyhow::Result<()> {
         self.call(|conn| conn.execute_batch("VACUUM;")).await
     }
+}
+
+/// 256 random bits, hex encoded.
+fn new_token() -> anyhow::Result<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no secure randomness: {e}"))?;
+    Ok(hex::encode(bytes))
 }
 
 fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
@@ -970,5 +1011,48 @@ mod tests {
             .unwrap();
         let next_nag = db.fire_reminder(third.id, due, due).await.unwrap().unwrap();
         assert_ne!(nag.id, next_nag.id);
+    }
+
+    #[tokio::test]
+    async fn calendar_tokens() {
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(
+            db.calendar_token(1, false).await.unwrap(),
+            None,
+            "unregistered"
+        );
+        db.upsert_user(user(1)).await.unwrap();
+        db.upsert_user(user(2)).await.unwrap();
+
+        let token = db.calendar_token(1, false).await.unwrap().unwrap();
+        assert_eq!(token.len(), 64);
+        assert_eq!(
+            db.calendar_token(1, false).await.unwrap().as_ref(),
+            Some(&token),
+            "stable"
+        );
+        assert_ne!(
+            db.calendar_token(2, false).await.unwrap().as_ref(),
+            Some(&token)
+        );
+        assert_eq!(
+            db.user_by_calendar_token(token.clone())
+                .await
+                .unwrap()
+                .map(|u| u.id),
+            Some(1)
+        );
+
+        let new = db.calendar_token(1, true).await.unwrap().unwrap();
+        assert_ne!(new, token);
+        assert_eq!(
+            db.user_by_calendar_token(token).await.unwrap(),
+            None,
+            "old link revoked"
+        );
+        assert_eq!(
+            db.user_by_calendar_token(new).await.unwrap().map(|u| u.id),
+            Some(1)
+        );
     }
 }

@@ -45,6 +45,8 @@ pub enum Action {
     LegacyNaggingAck(i64),
     /// `{"Id": <reminder_id>}` from the .NET bot.
     LegacyReminderAck(i64),
+    /// Replace the calendar feed link, revoking the old one.
+    CalendarReset,
     /// Calendar padding and headers.
     Noop,
 }
@@ -80,6 +82,7 @@ impl Action {
             ),
             Action::LegacyNaggingAck(id) => format!("ack:{id}"),
             Action::LegacyReminderAck(id) => format!(r#"{{"Id":{id}}}"#),
+            Action::CalendarReset => "cal:reset".into(),
             Action::Noop => "-".into(),
         }
     }
@@ -100,6 +103,7 @@ impl Action {
         Some(match parts.as_slice() {
             ["-"] => Action::Noop,
             ["list"] => Action::List,
+            ["cal", "reset"] => Action::CalendarReset,
             ["w", s] => Action::When(parse_subject(s)?),
             ["c", s, ym] if ym.len() == 6 => {
                 let month: u32 = ym[4..].parse().ok()?;
@@ -183,6 +187,7 @@ mod tests {
             Action::Snooze(big, Snooze::TomorrowMorning),
             Action::LegacyNaggingAck(big),
             Action::LegacyReminderAck(big),
+            Action::CalendarReset,
             Action::Noop,
         ] {
             let data = action.encode();

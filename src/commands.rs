@@ -28,6 +28,10 @@ pub enum Command {
     List,
     #[command(description = "show or change your timezone, e.g. /timezone London.", aliases = ["register"], hide_aliases)]
     Timezone(String),
+    #[command(
+        description = "get a link to see your reminders in your phone's calendar, with offline alarms."
+    )]
+    Calendar,
     #[command(description = "delete all your reminders.", aliases = ["removeallreminders"], hide_aliases)]
     ClearAll,
     #[command(description = "delete all your data.")]
@@ -150,6 +154,10 @@ pub async fn execute(
             Ok(tz) => conversation::set_timezone(db, sender, tz, now).await?,
             Err(error) => vec![conversation::ask_timezone(sender, &error.to_string())],
         },
+
+        Command::Calendar => {
+            vec![conversation::calendar_link(db, sender.chat_id, bot.web_app.as_ref(), false).await?.into()]
+        }
 
         Command::ClearAll => match db.delete_all_reminders(sender.chat_id).await? {
             0 => vec![Reply::text("You have no reminders.")],

@@ -4,8 +4,10 @@
 //! in-memory database.
 
 use chrono::{DateTime, Duration, NaiveTime, Utc};
-use teloxide::types::InlineKeyboardMarkup;
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+use url::Url;
 
+use crate::calendar;
 use crate::callback::{Action, Snooze, Subject};
 use crate::db::Db;
 use crate::model::{User, UserTz};
@@ -234,11 +236,43 @@ pub fn ask_timezone(sender: &Sender, intro: &str) -> Reply {
     }
 }
 
+/// The user's calendar feed link with instructions, or an explanation why there is none.
+pub async fn calendar_link(
+    db: &Db,
+    user_id: i64,
+    web_app: Option<&Url>,
+    reset: bool,
+) -> anyhow::Result<Panel> {
+    let text = |t: &str| Panel {
+        text: t.to_owned(),
+        keyboard: InlineKeyboardMarkup::default(),
+    };
+    let Some(base) = web_app else {
+        return Ok(text(
+            "The calendar feed is not enabled on this bot (WEB_APP_URL is not set).",
+        ));
+    };
+    let Some(token) = db.calendar_token(user_id, reset).await? else {
+        return Ok(text("Set your timezone first: send /start."));
+    };
+    let Some(url) = calendar::feed_url(base, &token) else {
+        return Ok(text("The calendar feed address is misconfigured."));
+    };
+    Ok(Panel {
+        text: calendar::instructions(&url),
+        keyboard: InlineKeyboardMarkup::new([[InlineKeyboardButton::callback(
+            "🔄 New link",
+            Action::CalendarReset.encode(),
+        )]]),
+    })
+}
+
 pub async fn on_callback(
     db: &Db,
     user_id: i64,
     data: &str,
     message_text: Option<&str>,
+    web_app: Option<&Url>,
     now: DateTime<Utc>,
 ) -> anyhow::Result<CallbackReply> {
     let Some(action) = Action::parse(data) else {
@@ -249,6 +283,12 @@ pub async fn on_callback(
     let nag_text = message_text.map_or("", |t| t.trim_start_matches("⏰").trim_start());
     match action {
         Action::Noop => return Ok(CallbackReply::default()),
+        Action::CalendarReset => {
+            return Ok(CallbackReply {
+                toast: Some("New link created. The old one no longer works.".into()),
+                edit: Some(calendar_link(db, user_id, web_app, true).await?),
+            });
+        }
         Action::Done(id) | Action::LegacyNaggingAck(id) => {
             return Ok(if db.acknowledge_nagging(user_id, id).await? {
                 CallbackReply::finish(format!("✅ {nag_text}"), Some("Done ✅"))
@@ -378,6 +418,7 @@ pub async fn on_callback(
         }
 
         Action::Noop
+        | Action::CalendarReset
         | Action::Done(_)
         | Action::LegacyNaggingAck(_)
         | Action::LegacyReminderAck(_) => {
@@ -461,7 +502,7 @@ mod tests {
     }
 
     async fn press(db: &Db, action: Action) -> CallbackReply {
-        on_callback(db, 7, &action.encode(), Some("message"), now())
+        on_callback(db, 7, &action.encode(), Some("message"), None, now())
             .await
             .unwrap()
     }
@@ -638,6 +679,7 @@ mod tests {
             7,
             &Action::Snooze(nagging.id, Snooze::TomorrowMorning).encode(),
             Some("⏰ pills"),
+            None,
             now(),
         )
         .await
@@ -656,6 +698,7 @@ mod tests {
             7,
             &Action::Done(nagging.id).encode(),
             Some("⏰ pills"),
+            None,
             now(),
         )
         .await
@@ -681,7 +724,7 @@ mod tests {
             .await
             .unwrap();
         let quick = find(&replies[0].markup, "15 min");
-        let reply = on_callback(&db, 8, &quick.encode(), None, now())
+        let reply = on_callback(&db, 8, &quick.encode(), None, None, now())
             .await
             .unwrap();
         assert_eq!(

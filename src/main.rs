@@ -1,3 +1,4 @@
+mod calendar;
 mod callback;
 mod commands;
 mod config;
@@ -92,6 +93,7 @@ async fn run(config: Config) -> anyhow::Result<()> {
     let web_state = Arc::new(web::WebState {
         db: db.clone(),
         bot_token: config.telegram_token.clone(),
+        web_app_url: config.web_app_url.clone(),
     });
     let web_server = tokio::spawn(web::serve(config.web_listen, web_state, shutdown.clone()));
 
