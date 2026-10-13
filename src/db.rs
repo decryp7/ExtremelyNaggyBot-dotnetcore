@@ -12,14 +12,18 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
-use crate::model::{Nagging, Recurrence, Reminder, User, UtcOffset};
+use crate::model::{Draft, Nagging, Recurrence, Reminder, User, UserTz, UtcOffset};
 
 /// Migrations are applied in order; `PRAGMA user_version` records how many have run.
 /// The first one is the schema of the original .NET bot, so existing databases upgrade in place.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_initial.sql"),
     include_str!("../migrations/002_offsets_and_scheduling.sql"),
+    include_str!("../migrations/003_timezones_and_drafts.sql"),
 ];
+
+const USER_COLUMNS: &str = "user_id, first_name, last_name, utc_offset_minutes, timezone";
+const REMINDER_COLUMNS: &str = "reminder_id, user_id, description, due_at, recurrence";
 
 /// Timestamps are stored as UTC text in the same format the .NET bot used (`DateTime.ToString("s")`).
 const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
@@ -89,17 +93,19 @@ impl Db {
                 .optional()?
                 .is_some();
             tx.execute(
-                "INSERT INTO users (user_id, first_name, last_name, utc_offset_minutes)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO users (user_id, first_name, last_name, utc_offset_minutes, timezone)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT (user_id) DO UPDATE SET
                      first_name = excluded.first_name,
                      last_name = excluded.last_name,
-                     utc_offset_minutes = excluded.utc_offset_minutes",
+                     utc_offset_minutes = excluded.utc_offset_minutes,
+                     timezone = excluded.timezone",
                 params![
                     user.id,
                     user.first_name,
                     user.last_name,
-                    user.utc_offset.minutes()
+                    user.tz.offset_minutes(Utc::now()),
+                    user.tz.name()
                 ],
             )?;
             tx.commit()?;
@@ -115,7 +121,7 @@ impl Db {
     pub async fn user(&self, user_id: i64) -> anyhow::Result<Option<User>> {
         self.call(move |conn| {
             conn.query_row(
-                "SELECT user_id, first_name, last_name, utc_offset_minutes FROM users WHERE user_id = ?1",
+                &format!("SELECT {USER_COLUMNS} FROM users WHERE user_id = ?1"),
                 [user_id],
                 user_from_row,
             )
@@ -159,6 +165,45 @@ impl Db {
             )?
             .query_map([user_id], reminder_from_row)?
             .collect()
+        })
+        .await
+    }
+
+    pub async fn reminder(
+        &self,
+        user_id: i64,
+        reminder_id: i64,
+    ) -> anyhow::Result<Option<Reminder>> {
+        self.call(move |conn| {
+            conn.query_row(
+                &format!("SELECT {REMINDER_COLUMNS} FROM reminders WHERE reminder_id = ?1 AND user_id = ?2"),
+                [reminder_id, user_id],
+                reminder_from_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    /// Changes when and how often one of the user's reminders fires.
+    pub async fn update_reminder(
+        &self,
+        user_id: i64,
+        reminder_id: i64,
+        due_at: DateTime<Utc>,
+        recurrence: Recurrence,
+    ) -> anyhow::Result<Option<Reminder>> {
+        self.call(move |conn| {
+            conn.query_row(
+                &format!(
+                    "UPDATE reminders SET due_at = ?1, recurrence = ?2
+                     WHERE reminder_id = ?3 AND user_id = ?4
+                     RETURNING {REMINDER_COLUMNS}"
+                ),
+                params![DbTime(due_at), recurrence.to_db(), reminder_id, user_id],
+                reminder_from_row,
+            )
+            .optional()
         })
         .await
     }
@@ -234,7 +279,8 @@ impl Db {
                 next_at: first_nag_at,
             };
 
-            match reminder.recurrence.next_after(reminder.due_at, now) {
+            let tz = user_tz(&tx, reminder.user_id)?;
+            match tz.and_then(|tz| reminder.recurrence.next_after(reminder.due_at, now, tz)) {
                 Some(next) => tx.execute(
                     "UPDATE reminders SET due_at = ?1 WHERE reminder_id = ?2",
                     params![DbTime(next), reminder.id],
@@ -288,6 +334,22 @@ impl Db {
         .await
     }
 
+    /// Postpones the next nag. Only the user being nagged can snooze it.
+    pub async fn snooze_nagging(
+        &self,
+        user_id: i64,
+        nagging_id: i64,
+        next_at: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        self.call(move |conn| {
+            Ok(conn.execute(
+                "UPDATE naggings SET next_at = ?1 WHERE nagging_id = ?2 AND user_id = ?3",
+                params![DbTime(next_at), nagging_id, user_id],
+            )? > 0)
+        })
+        .await
+    }
+
     /// Stops naggings by reminder id. Handles "Acknowledge" buttons sent by the .NET bot.
     pub async fn acknowledge_reminder(
         &self,
@@ -307,6 +369,114 @@ impl Db {
     pub async fn delete_naggings_for_user(&self, user_id: i64) -> anyhow::Result<usize> {
         self.call(move |conn| conn.execute("DELETE FROM naggings WHERE user_id = ?1", [user_id]))
             .await
+    }
+
+    // ---- drafts ------------------------------------------------------------------------
+
+    /// Stores text waiting for a time. A user has at most one draft; older ones are replaced.
+    pub async fn create_draft(
+        &self,
+        user_id: i64,
+        text: String,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Draft> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM drafts WHERE user_id = ?1", [user_id])?;
+            tx.execute(
+                "INSERT INTO drafts (user_id, text, created_at) VALUES (?1, ?2, ?3)",
+                params![user_id, text, DbTime(now)],
+            )?;
+            let draft = Draft {
+                id: tx.last_insert_rowid(),
+                user_id,
+                text,
+                created_at: now,
+            };
+            tx.commit()?;
+            Ok(draft)
+        })
+        .await
+    }
+
+    pub async fn draft(&self, user_id: i64, draft_id: i64) -> anyhow::Result<Option<Draft>> {
+        self.call(move |conn| {
+            conn.query_row(
+                "SELECT draft_id, user_id, text, created_at FROM drafts WHERE draft_id = ?1 AND user_id = ?2",
+                [draft_id, user_id],
+                draft_from_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    /// The user's draft, if it was created after `since`.
+    pub async fn pending_draft(
+        &self,
+        user_id: i64,
+        since: DateTime<Utc>,
+    ) -> anyhow::Result<Option<Draft>> {
+        self.call(move |conn| {
+            conn.query_row(
+                "SELECT draft_id, user_id, text, created_at FROM drafts
+                 WHERE user_id = ?1 AND created_at >= ?2
+                 ORDER BY draft_id DESC LIMIT 1",
+                params![user_id, DbTime(since)],
+                draft_from_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    pub async fn delete_draft(&self, user_id: i64, draft_id: i64) -> anyhow::Result<bool> {
+        self.call(move |conn| {
+            Ok(conn.execute(
+                "DELETE FROM drafts WHERE draft_id = ?1 AND user_id = ?2",
+                [draft_id, user_id],
+            )? > 0)
+        })
+        .await
+    }
+
+    /// Turns a draft into a reminder. Returns `None` if the draft no longer exists
+    /// (already saved or cancelled).
+    pub async fn save_draft(
+        &self,
+        user_id: i64,
+        draft_id: i64,
+        due_at: DateTime<Utc>,
+        recurrence: Recurrence,
+    ) -> anyhow::Result<Option<Reminder>> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            let text: Option<String> = tx
+                .query_row(
+                    "DELETE FROM drafts WHERE draft_id = ?1 AND user_id = ?2 RETURNING text",
+                    [draft_id, user_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(description) = text else {
+                return Ok(None);
+            };
+            tx.execute(
+                "INSERT INTO reminders (user_id, description, due_at, recurrence) VALUES (?1, ?2, ?3, ?4)",
+                params![user_id, description, DbTime(due_at), recurrence.to_db()],
+            )?;
+            let reminder = Reminder { id: tx.last_insert_rowid(), user_id, description, due_at, recurrence };
+            tx.commit()?;
+            Ok(Some(reminder))
+        })
+        .await
+    }
+
+    pub async fn delete_drafts_before(&self, cutoff: DateTime<Utc>) -> anyhow::Result<usize> {
+        self.call(move |conn| {
+            conn.execute("DELETE FROM drafts WHERE created_at < ?1", [DbTime(cutoff)])
+        })
+        .await
     }
 
     // ---- maintenance -------------------------------------------------------------------
@@ -334,21 +504,53 @@ fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
 
 fn reminder_by_id(tx: &Transaction<'_>, reminder_id: i64) -> rusqlite::Result<Option<Reminder>> {
     tx.query_row(
-        "SELECT reminder_id, user_id, description, due_at, recurrence FROM reminders WHERE reminder_id = ?1",
+        &format!("SELECT {REMINDER_COLUMNS} FROM reminders WHERE reminder_id = ?1"),
         [reminder_id],
         reminder_from_row,
     )
     .optional()
 }
 
+fn user_tz(tx: &Transaction<'_>, user_id: i64) -> rusqlite::Result<Option<UserTz>> {
+    tx.query_row(
+        "SELECT utc_offset_minutes, timezone FROM users WHERE user_id = ?1",
+        [user_id],
+        |row| tz_from_columns(row, 0, 1),
+    )
+    .optional()
+}
+
 fn user_from_row(row: &Row<'_>) -> rusqlite::Result<User> {
-    let minutes: i32 = row.get(3)?;
     Ok(User {
         id: row.get(0)?,
         first_name: row.get(1)?,
         last_name: row.get(2)?,
-        utc_offset: UtcOffset::from_minutes(minutes)
-            .ok_or_else(|| invalid_column(3, "UTC offset out of range"))?,
+        tz: tz_from_columns(row, 3, 4)?,
+    })
+}
+
+/// A named timezone takes precedence; the offset column is the fallback.
+fn tz_from_columns(
+    row: &Row<'_>,
+    offset_index: usize,
+    name_index: usize,
+) -> rusqlite::Result<UserTz> {
+    let name: Option<String> = row.get(name_index)?;
+    if let Some(tz) = name.and_then(|name| name.parse().ok()) {
+        return Ok(UserTz::Named(tz));
+    }
+    let minutes: i32 = row.get(offset_index)?;
+    UtcOffset::from_minutes(minutes)
+        .map(UserTz::Fixed)
+        .ok_or_else(|| invalid_column(offset_index, "UTC offset out of range"))
+}
+
+fn draft_from_row(row: &Row<'_>) -> rusqlite::Result<Draft> {
+    Ok(Draft {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        text: row.get(2)?,
+        created_at: row.get::<_, DbTime>(3)?.0,
     })
 }
 
@@ -412,7 +614,7 @@ mod tests {
             id,
             first_name: "Ada".into(),
             last_name: String::new(),
-            utc_offset: UtcOffset::from_minutes(480).unwrap(),
+            tz: UserTz::Fixed(UtcOffset::from_minutes(480).unwrap()),
         }
     }
 
@@ -436,7 +638,10 @@ mod tests {
         let db = Db::init(conn).unwrap();
 
         let migrated = db.user(1).await.unwrap().unwrap();
-        assert_eq!(migrated.utc_offset.minutes(), 480);
+        assert_eq!(
+            migrated.tz,
+            UserTz::Fixed(UtcOffset::from_minutes(480).unwrap())
+        );
         let reminders = db.reminders_for_user(1).await.unwrap();
         assert_eq!(reminders.len(), 1);
         assert_eq!(reminders[0].due_at, utc(2026, 1, 1, 0, 0));
@@ -458,7 +663,7 @@ mod tests {
             Registration::Created
         );
         let mut updated = user(1);
-        updated.utc_offset = UtcOffset::from_minutes(-300).unwrap();
+        updated.tz = UserTz::Named(chrono_tz::Tz::Europe__London);
         assert_eq!(
             db.upsert_user(updated.clone()).await.unwrap(),
             Registration::Updated
@@ -625,5 +830,127 @@ mod tests {
 
         assert!(db.acknowledge_reminder(1, reminder.id).await.unwrap());
         assert!(db.due_naggings(due).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn draft_becomes_a_reminder_once() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_user(user(1)).await.unwrap();
+        let now = utc(2026, 3, 1, 8, 0);
+        let first = db.create_draft(1, "old".into(), now).await.unwrap();
+        let draft = db.create_draft(1, "call mum".into(), now).await.unwrap();
+        assert_eq!(
+            db.draft(1, first.id).await.unwrap(),
+            None,
+            "only the latest draft is kept"
+        );
+        assert_eq!(
+            db.draft(2, draft.id).await.unwrap(),
+            None,
+            "drafts are private"
+        );
+        assert_eq!(db.pending_draft(1, now).await.unwrap(), Some(draft.clone()));
+
+        let due = utc(2026, 3, 2, 1, 0);
+        let reminder = db
+            .save_draft(1, draft.id, due, Recurrence::Weekdays)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reminder.description, "call mum");
+        assert_eq!(reminder.recurrence, Recurrence::Weekdays);
+        assert_eq!(
+            db.save_draft(1, draft.id, due, Recurrence::Once)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(db.reminders_for_user(1).await.unwrap(), vec![reminder]);
+    }
+
+    #[tokio::test]
+    async fn updates_and_snoozes() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_user(user(1)).await.unwrap();
+        let due = utc(2026, 3, 1, 8, 0);
+        let reminder = db
+            .add_reminder(1, "pills".into(), due, Recurrence::Once)
+            .await
+            .unwrap();
+
+        let later = utc(2026, 3, 3, 9, 0);
+        assert_eq!(
+            db.update_reminder(2, reminder.id, later, Recurrence::Daily)
+                .await
+                .unwrap(),
+            None
+        );
+        let updated = db
+            .update_reminder(1, reminder.id, later, Recurrence::Daily)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (updated.due_at, updated.recurrence),
+            (later, Recurrence::Daily)
+        );
+
+        let nagging = db
+            .fire_reminder(reminder.id, later, later)
+            .await
+            .unwrap()
+            .unwrap();
+        let snooze_until = later + ChronoDuration::hours(1);
+        assert!(
+            !db.snooze_nagging(2, nagging.id, snooze_until)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.snooze_nagging(1, nagging.id, snooze_until)
+                .await
+                .unwrap()
+        );
+        assert!(db.due_naggings(later).await.unwrap().is_empty());
+        assert_eq!(db.due_naggings(snooze_until).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn named_timezone_round_trips() {
+        let db = Db::open_in_memory().unwrap();
+        let mut u = user(1);
+        u.tz = UserTz::Named(chrono_tz::Tz::America__New_York);
+        db.upsert_user(u.clone()).await.unwrap();
+        assert_eq!(db.user(1).await.unwrap(), Some(u));
+    }
+
+    #[tokio::test]
+    async fn ids_of_deleted_rows_are_not_reused() {
+        let db = Db::open_in_memory().unwrap();
+        db.upsert_user(user(1)).await.unwrap();
+        let due = utc(2026, 3, 1, 8, 0);
+        let first = db
+            .add_reminder(1, "a".into(), due, Recurrence::Once)
+            .await
+            .unwrap();
+        db.delete_reminder(1, first.id).await.unwrap();
+        let second = db
+            .add_reminder(1, "b".into(), due, Recurrence::Once)
+            .await
+            .unwrap();
+        assert_ne!(first.id, second.id);
+
+        let nag = db
+            .fire_reminder(second.id, due, due)
+            .await
+            .unwrap()
+            .unwrap();
+        db.acknowledge_nagging(1, nag.id).await.unwrap();
+        let third = db
+            .add_reminder(1, "c".into(), due, Recurrence::Once)
+            .await
+            .unwrap();
+        let next_nag = db.fire_reminder(third.id, due, due).await.unwrap().unwrap();
+        assert_ne!(nag.id, next_nag.id);
     }
 }

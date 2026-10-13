@@ -7,22 +7,35 @@ minute until you press **Acknowledge**.
 
 Written in Rust ([teloxide](https://github.com/teloxide/teloxide) + SQLite).
 
-## Commands
+## Using it
+
+Send the bot any message, for example `call mum`, then pick a time with the buttons:
+
+1. **When?** `15 min` · `1 hour` · `3 hours` · `This evening 20:00` · `Tomorrow 09:00` · `📅 Pick a date`
+   (calendar → hour → minute). You can also type a time instead: `fri 6pm`, `25/12 9:00`, `in 2 hours`, `tomorrow`.
+2. **How often?** `Once` · `Every day` · `Weekdays` · `Every Tue` · `Monthly` · `Yearly`. Tapping one saves the reminder.
+
+When a reminder is due it repeats every minute until you tap **✅ Done**, or snooze it
+(`10 min`, `1 hour`, `Tomorrow`). If a recurring reminder is still not done when it next
+fires, the new occurrence replaces it.
+
+The first time, the bot asks for your timezone: tap **📍 Share my location**, or type a city
+(`London`), a timezone (`Asia/Singapore`) or an offset (`+8`). Named timezones follow
+daylight saving.
+
+Forwarding a message to the bot turns it into a reminder too.
 
 | Command | Description |
 | --- | --- |
-| `/register <utc_offset>` | Register, or change your timezone. Examples: `+8`, `-5`, `+5:30`. |
-| `/remindme <description> <dd/mm/yyyy> <HH:MM> [once\|daily\|weekly\|monthly]` | Add a reminder (24-hour time, `once` by default). |
-| `/listreminders` | List your reminders. |
-| `/removereminder <id>` | Remove a reminder and stop its nagging. |
-| `/removeallreminders` | Remove all your reminders. |
-| `/unregister` | Remove yourself and all your data. |
+| `/list` | See your reminders; tap one to change its time or repeat, or delete it. |
+| `/remindme <text>` | Add a reminder (also works in groups). |
+| `/timezone [city]` | Show or change your timezone. |
+| `/clearall` | Delete all your reminders. |
+| `/unregister` | Delete all your data. |
 | `/help`, `/about` | Help and information. |
 
-Example: `/remindme Take pills 25/12/2026 08:00 daily`
-
-A recurring reminder that has not been acknowledged keeps nagging until it fires again. That
-next occurrence then replaces the old nagging.
+The old commands (`/register`, `/listreminders`, `/removeallreminders` and the one-line
+`/remindme <text> dd/mm/yyyy HH:MM daily`) still work.
 
 ## Running with Docker Compose
 

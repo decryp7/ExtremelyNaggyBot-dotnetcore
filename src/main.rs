@@ -1,9 +1,13 @@
+mod callback;
 mod commands;
 mod config;
+mod conversation;
 mod db;
 mod model;
+mod panels;
 mod scheduler;
 mod telegram;
+mod time_input;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -11,12 +15,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use teloxide::adaptors::throttle::Limits;
 use teloxide::prelude::*;
-use teloxide::utils::command::BotCommands;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-use crate::commands::{BotInfo, Command};
+use crate::commands::BotInfo;
 use crate::config::Config;
 use crate::db::Db;
 use crate::telegram::AppState;
@@ -72,9 +75,7 @@ async fn run(config: Config) -> anyhow::Result<()> {
     };
     tracing::info!(id = %me.id, username = %bot_info.username, "connected to Telegram");
 
-    if let Err(error) = bot.set_my_commands(Command::bot_commands()).await {
-        tracing::warn!(?error, "failed to publish the command list");
-    }
+    telegram::publish_commands(&bot).await;
     if let Some(chat_id) = config.admin_chat_id
         && let Err(error) = bot
             .send_message(ChatId(chat_id), "Extremely Naggy Bot is online!")

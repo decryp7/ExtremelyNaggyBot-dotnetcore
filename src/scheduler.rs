@@ -15,6 +15,8 @@ const TICK_INTERVAL: StdDuration = StdDuration::from_secs(10);
 /// How long to wait before nagging again about an unacknowledged reminder.
 const NAG_INTERVAL: Duration = Duration::minutes(1);
 const VACUUM_INTERVAL: StdDuration = StdDuration::from_secs(24 * 60 * 60);
+/// Drafts (reminders started but never given a time) are discarded after this long.
+const DRAFT_LIFETIME: Duration = Duration::days(1);
 
 pub async fn run(bot: Bot, db: Db, shutdown: CancellationToken) {
     let mut ticker = tokio::time::interval(TICK_INTERVAL);
@@ -36,6 +38,9 @@ pub async fn run(bot: Bot, db: Db, shutdown: CancellationToken) {
         }
 
         if last_vacuum.elapsed() >= VACUUM_INTERVAL {
+            if let Err(error) = db.delete_drafts_before(now - DRAFT_LIFETIME).await {
+                tracing::error!(?error, "failed to delete old drafts");
+            }
             match db.vacuum().await {
                 Ok(()) => tracing::info!("vacuumed database"),
                 Err(error) => tracing::error!(?error, "failed to vacuum database"),
